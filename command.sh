@@ -1,37 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IP_CIDR='169.58.224.216/17'
-GW='169.58.128.1'
 DEV='eth0'
+IP4='169.58.224.216/17'
+GW4='169.58.128.1'
+IP6='2a02:c207:2352:8738::1/64'
+GW6='fe80::1'
+DNS1='195.179.224.53'
+DNS2='209.126.15.53'
 
 stamp=$(date +%Y%m%d-%H%M%S)
 backup=/root/early-network-backup-$stamp
 mkdir -p "$backup"
 cp -a /etc/systemd/network "$backup/" 2>/dev/null || true
 cp -a /etc/initramfs-tools "$backup/" 2>/dev/null || true
-cp -a /etc/default/grub "$backup/grub" 2>/dev/null || true
+cp -a /etc/NetworkManager/conf.d "$backup/networkmanager-conf.d" 2>/dev/null || true
 
-echo '===== 1. EARLY SYSTEMD-NETWORKD CONFIG ====='
+echo '===== EARLY NORMAL USERSPACE NETWORK ====='
 mkdir -p /etc/systemd/network
 cat >/etc/systemd/network/05-egor-early-eth0.network <<EOF
 [Match]
 Name=$DEV
 
 [Network]
-Address=$IP_CIDR
-Gateway=$GW
-IPv6AcceptRA=yes
+Address=$IP4
+Address=$IP6
+DNS=$DNS1
+DNS=$DNS2
 LinkLocalAddressing=ipv6
 ConfigureWithoutCarrier=yes
+
+[Route]
+Destination=0.0.0.0/0
+Gateway=$GW4
+
+[Route]
+Destination=::/0
+Gateway=$GW6
+GatewayOnLink=yes
 
 [Link]
 RequiredForOnline=yes
 EOF
 chmod 0644 /etc/systemd/network/05-egor-early-eth0.network
 
-# Tell NetworkManager not to take eth0 away from networkd.  This preserves
-# NetworkManager for the desktop while the server NIC is owned by networkd.
 mkdir -p /etc/NetworkManager/conf.d
 cat >/etc/NetworkManager/conf.d/10-egor-eth0-unmanaged.conf <<EOF
 [keyfile]
@@ -39,15 +51,12 @@ unmanaged-devices=interface-name:$DEV
 EOF
 chmod 0644 /etc/NetworkManager/conf.d/10-egor-eth0-unmanaged.conf
 
-# Start networkd as part of the earliest normal userspace network setup.
 systemctl enable systemd-networkd.service >/dev/null
 systemctl enable systemd-networkd-wait-online.service >/dev/null 2>&1 || true
-
-# Do NOT restart networking here: current connection is our recovery path.
 networkctl reload || true
 
-echo '===== 2. INITRAMFS EARLY NETWORK SCRIPT ====='
-mkdir -p /etc/initramfs-tools/scripts/init-premount
+echo '===== INITRAMFS NETWORK ====='
+mkdir -p /etc/initramfs-tools/scripts/init-premount /etc/initramfs-tools/hooks
 cat >/etc/initramfs-tools/scripts/init-premount/egor-early-network <<'EOS'
 #!/bin/sh
 PREREQ=""
@@ -55,33 +64,32 @@ prereqs() { echo "$PREREQ"; }
 case "${1:-}" in prereqs) prereqs; exit 0;; esac
 
 DEV=eth0
-ADDR=169.58.224.216/17
-GW=169.58.128.1
+ADDR4=169.58.224.216/17
+GW4=169.58.128.1
 
-# initramfs-tools includes busybox; use whichever ip implementation exists.
+# Boot must never fail merely because early networking failed.
+modprobe virtio_net 2>/dev/null || true
+
 IPBIN=""
-for x in /usr/bin/ip /sbin/ip /bin/ip; do
+for x in /usr/bin/ip /usr/sbin/ip /sbin/ip /bin/ip; do
     [ -x "$x" ] && IPBIN="$x" && break
 done
 if [ -z "$IPBIN" ] && command -v ip >/dev/null 2>&1; then
     IPBIN=$(command -v ip)
 fi
 
-# Never make boot depend on networking: failure here must not prevent root mount.
 if [ -n "$IPBIN" ]; then
     "$IPBIN" link set "$DEV" up 2>/dev/null || true
-    "$IPBIN" addr replace "$ADDR" dev "$DEV" 2>/dev/null || true
-    "$IPBIN" route replace default via "$GW" dev "$DEV" 2>/dev/null || true
-    echo "egor-early-network: $DEV $ADDR via $GW" >/dev/kmsg 2>/dev/null || true
+    "$IPBIN" addr replace "$ADDR4" dev "$DEV" 2>/dev/null || true
+    "$IPBIN" route replace default via "$GW4" dev "$DEV" 2>/dev/null || true
+    echo "egor-early-network: IPv4 up on $DEV ($ADDR4 via $GW4)" >/dev/kmsg 2>/dev/null || true
 else
-    echo 'egor-early-network: no ip utility in initramfs; skipped' >/dev/kmsg 2>/dev/null || true
+    echo 'egor-early-network: ip utility unavailable; continuing boot' >/dev/kmsg 2>/dev/null || true
 fi
 exit 0
 EOS
 chmod 0755 /etc/initramfs-tools/scripts/init-premount/egor-early-network
 
-# Ensure the virtio network driver and iproute utility are available in initramfs.
-mkdir -p /etc/initramfs-tools/hooks
 cat >/etc/initramfs-tools/hooks/egor-early-network-tools <<'EOS'
 #!/bin/sh
 PREREQ=""
@@ -89,22 +97,63 @@ prereqs() { echo "$PREREQ"; }
 case "${1:-}" in prereqs) prereqs; exit 0;; esac
 . /usr/share/initramfs-tools/hook-functions
 copy_exec /usr/sbin/ip /usr/sbin/ip 2>/dev/null || copy_exec /usr/bin/ip /usr/bin/ip 2>/dev/null || true
+copy_exec /usr/sbin/modprobe /usr/sbin/modprobe 2>/dev/null || true
 manual_add_modules virtio_net 2>/dev/null || true
 EOS
 chmod 0755 /etc/initramfs-tools/hooks/egor-early-network-tools
 
-echo '===== 3. REBUILD INITRAMFS ====='
+# A local rescue guard: if our early config somehow produces no IPv4 default
+# route after normal userspace starts, remove only our override and regenerate
+# the provider's original netplan configuration.
+cat >/usr/local/sbin/egor-network-rescue <<'EOS'
+#!/bin/sh
+sleep 5
+if ! ip -4 route show default | grep -q 'via 169.58.128.1.*dev eth0'; then
+    logger -t egor-network-rescue 'Early network route missing; reverting custom runtime override'
+    rm -f /etc/systemd/network/05-egor-early-eth0.network
+    rm -f /etc/NetworkManager/conf.d/10-egor-eth0-unmanaged.conf
+    netplan generate || true
+    systemctl restart systemd-networkd.service || true
+fi
+exit 0
+EOS
+chmod 0755 /usr/local/sbin/egor-network-rescue
+
+cat >/etc/systemd/system/egor-network-rescue.service <<'EOF'
+[Unit]
+Description=Egor early network rescue guard
+After=systemd-networkd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/egor-network-rescue
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable egor-network-rescue.service >/dev/null
+
+echo '===== REBUILD INITRAMFS ====='
+sh -n /etc/initramfs-tools/scripts/init-premount/egor-early-network
+sh -n /etc/initramfs-tools/hooks/egor-early-network-tools
 update-initramfs -u -k "$(uname -r)"
 
-echo '===== 4. VALIDATE ====='
-systemd-analyze verify /etc/systemd/network/05-egor-early-eth0.network 2>&1 || true
-lsinitramfs "/boot/initrd.img-$(uname -r)" | grep -E 'egor-early-network|virtio_net|(/|^)ip$' | sed -n '1,120p' || true
+echo '===== VERIFY PACKED EARLY NETWORK ====='
+lsinitramfs "/boot/initrd.img-$(uname -r)" | grep -E 'scripts/init-premount/egor-early-network|virtio_net|usr/(s)?bin/ip|usr/(s)?bin/modprobe' | sed -n '1,120p' || true
 
-echo '===== 5. CURRENT CONNECTION (UNCHANGED) ====='
-ip -brief address show "$DEV"
+echo '===== VERIFY CONFIG CONTENT ====='
+sed -n '1,160p' /etc/systemd/network/05-egor-early-eth0.network
+networkctl reload
+
+echo '===== CURRENT LIVE NETWORK: MUST STILL BE INTACT ====='
+ip -brief addr show "$DEV"
 ip route
-systemctl is-active systemd-networkd || true
+ip -6 route | sed -n '1,40p'
+systemctl is-active systemd-networkd
 systemctl is-active NetworkManager || true
+systemctl is-enabled egor-network-rescue.service
 
 echo "BACKUP=$backup"
-echo 'Installed. No reboot performed.'
+echo 'READY_FOR_REBOOT=yes'
+echo 'REBOOT_NOT_PERFORMED=yes'
