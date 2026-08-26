@@ -1,45 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd /opt/orca-51
 
-CONF=/etc/ssh/sshd_config.d/00-disable-password-auth.conf
-BACKUP_DIR=/root/ssh-hardening-backup-$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR"
-cp -a /etc/ssh/sshd_config "$BACKUP_DIR/sshd_config"
-cp -a /etc/ssh/sshd_config.d "$BACKUP_DIR/sshd_config.d" 2>/dev/null || true
+echo '===== REPO ====='
+pwd
+git status --short --branch 2>/dev/null || true
+git log -5 --oneline 2>/dev/null || true
+printf 'python files: '; find . -type f -name '*.py' | wc -l
+printf 'python LOC: '; find . -type f -name '*.py' -print0 | xargs -0 cat | wc -l
 
-echo '===== SSH CONFIG SOURCES ====='
-grep -RniE '^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication|PubkeyAuthentication|PermitRootLogin)[[:space:]]+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null || true
+echo '===== TOP LEVEL ====='
+find . -maxdepth 2 -type d | sort | head -100
 
-echo '===== BEFORE ====='
-sshd -T | grep -E '^(pubkeyauthentication|passwordauthentication|permitrootlogin|kbdinteractiveauthentication) ' || true
+echo '===== BIGGEST PYTHON FILES ====='
+find . -type f -name '*.py' -printf '%s %p\n' | sort -nr | head -30
 
-if ! sshd -T | grep -q '^pubkeyauthentication yes$'; then
-  echo 'ERROR: Public-key authentication is not enabled. Refusing to change SSH.' >&2
-  exit 1
+echo '===== ORCA PACKAGE ====='
+find src -maxdepth 3 -type f -name '*.py' 2>/dev/null | sort | head -160
+
+echo '===== ENTRY / EVENT / SPEECH SYMBOLS ====='
+grep -RniE 'class (Orca|EventManager|Speech|ScriptManager)|def (main|start|run|activate|process|enqueue|presentMessage|speak|_process)' src/orca 2>/dev/null | head -220 || true
+
+echo '===== IMPORT / MAIN ENTRY ====='
+grep -RniE 'GLib\.MainLoop|Gtk\.main|Atspi|pyatspi|EventManager|event_manager|speech\.speak|script_manager' src/orca 2>/dev/null | head -260 || true
+
+echo '===== LIKELY HOT PATTERNS ====='
+printf 'getattr calls: '; grep -Rho 'getattr(' src/orca --include='*.py' | wc -l
+printf 'try blocks: '; grep -Rho '^[[:space:]]*try:' src/orca --include='*.py' | wc -l
+printf 'list comprehensions: '; grep -Rho '\[[^]]* for [^]]*\]' src/orca --include='*.py' | wc -l || true
+printf 'sleep calls: '; grep -RniE 'time\.sleep|GLib\.timeout_add' src/orca --include='*.py' | wc -l
+
+echo '===== LIVE ORCA ====='
+pid=$(pgrep -n -f '(^|/)orca( |$)' || true)
+echo "pid=$pid"
+if [ -n "$pid" ]; then
+  ps -p "$pid" -o pid,ppid,user,%cpu,%mem,rss,vsz,etime,cmd
+  readlink -f "/proc/$pid/exe" || true
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -E '^(PYTHONPATH|PATH|XDG|DISPLAY|DBUS|GI_TYPELIB)' | head -50 || true
 fi
 
-cat > "$CONF" <<'EOF'
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-EOF
-chmod 644 "$CONF"
-rm -f /etc/ssh/sshd_config.d/99-disable-password-auth.conf
-
-sshd -t
-systemctl reload ssh
-sleep 1
-
-echo '===== AFTER ====='
-sshd -T | grep -E '^(pubkeyauthentication|passwordauthentication|permitrootlogin|kbdinteractiveauthentication) ' || true
-
-if ! sshd -T | grep -q '^passwordauthentication no$'; then
-  echo 'ERROR: PasswordAuthentication is still enabled after reload.' >&2
-  exit 2
-fi
-
-echo '===== SERVICE ====='
-systemctl is-active ssh
-ss -ltnp | grep -E '(:22[[:space:]])' || true
-
-echo '===== BACKUP ====='
-echo "$BACKUP_DIR"
+echo '===== CORE FILE EXCERPTS ====='
+for f in src/orca/orca.py src/orca/event_manager.py src/orca/script_manager.py src/orca/speech.py src/orca/script.py; do
+  if [ -f "$f" ]; then
+    echo "--- $f ---"
+    sed -n '1,260p' "$f" | head -260
+  fi
+done
