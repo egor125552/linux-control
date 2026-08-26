@@ -1,48 +1,44 @@
 #!/usr/bin/env bash
-set -euo pipefail
-cd /opt/orca-51
+set -u
+BASE=/opt/orca-51/lib/python3/dist-packages/orca
+cd "$BASE" || exit 1
 
-echo '===== REPO ====='
-pwd
-git status --short --branch 2>/dev/null || true
-git log -5 --oneline 2>/dev/null || true
-printf 'python files: '; find . -type f -name '*.py' | wc -l
-printf 'python LOC: '; find . -type f -name '*.py' -print0 | xargs -0 cat | wc -l
+show_symbols() {
+  f="$1"
+  echo "===== $f : symbols ====="
+  grep -nE '^class |^[[:space:]]+def |^def ' "$f" 2>/dev/null | head -220 || true
+}
 
-echo '===== TOP LEVEL ====='
-find . -maxdepth 2 -type d | sort | head -100
+for f in event_manager.py script_manager.py script.py speech.py speech_manager.py speech_generator.py generator.py ax_object.py ax_utilities_event.py focus_manager.py; do
+  [ -f "$f" ] && show_symbols "$f"
+done
 
-echo '===== BIGGEST PYTHON FILES ====='
-find . -type f -name '*.py' -printf '%s %p\n' | sort -nr | head -30
+echo '===== EVENT MANAGER IMPORTANT BLOCKS ====='
+grep -nE 'enqueue|_dequeue|_process|processEvent|registerListener|deregisterListener|event_queue|Queue|idle_add|timeout_add' event_manager.py 2>/dev/null | head -180 || true
+sed -n '1,420p' event_manager.py 2>/dev/null || true
 
-echo '===== ORCA PACKAGE ====='
-find src -maxdepth 3 -type f -name '*.py' 2>/dev/null | sort | head -160
+echo '===== SCRIPT MANAGER IMPORTANT BLOCKS ====='
+grep -nE 'getScript|setActiveScript|activeScript|appScript|script' script_manager.py 2>/dev/null | head -180 || true
+sed -n '1,360p' script_manager.py 2>/dev/null || true
 
-echo '===== ENTRY / EVENT / SPEECH SYMBOLS ====='
-grep -RniE 'class (Orca|EventManager|Speech|ScriptManager)|def (main|start|run|activate|process|enqueue|presentMessage|speak|_process)' src/orca 2>/dev/null | head -220 || true
+echo '===== SPEECH FRONT DOOR ====='
+sed -n '1,360p' speech.py 2>/dev/null || true
 
-echo '===== IMPORT / MAIN ENTRY ====='
-grep -RniE 'GLib\.MainLoop|Gtk\.main|Atspi|pyatspi|EventManager|event_manager|speech\.speak|script_manager' src/orca 2>/dev/null | head -260 || true
+echo '===== SPEECH MANAGER HOT METHODS ====='
+grep -nE 'def .*speak|def .*interrupt|def .*update|def .*voice|def .*server|speechd|SpeechServer|speak\(' speech_manager.py 2>/dev/null | head -220 || true
 
-echo '===== LIKELY HOT PATTERNS ====='
-printf 'getattr calls: '; grep -Rho 'getattr(' src/orca --include='*.py' | wc -l
-printf 'try blocks: '; grep -Rho '^[[:space:]]*try:' src/orca --include='*.py' | wc -l
-printf 'list comprehensions: '; grep -Rho '\[[^]]* for [^]]*\]' src/orca --include='*.py' | wc -l || true
-printf 'sleep calls: '; grep -RniE 'time\.sleep|GLib\.timeout_add' src/orca --include='*.py' | wc -l
+echo '===== SPEECH GENERATOR HOT METHODS ====='
+grep -nE '^    def generate|^    def _generate|generateSpeech|cache|cached|memo|format' speech_generator.py 2>/dev/null | head -260 || true
 
-echo '===== LIVE ORCA ====='
-pid=$(pgrep -n -f '(^|/)orca( |$)' || true)
+echo '===== LIVE PROCESS MAPS / FD / THREADS ====='
+pid=$(pgrep -n -x orca || pgrep -n -f '/orca($| )' || true)
 echo "pid=$pid"
 if [ -n "$pid" ]; then
-  ps -p "$pid" -o pid,ppid,user,%cpu,%mem,rss,vsz,etime,cmd
-  readlink -f "/proc/$pid/exe" || true
-  tr '\0' '\n' < "/proc/$pid/environ" | grep -E '^(PYTHONPATH|PATH|XDG|DISPLAY|DBUS|GI_TYPELIB)' | head -50 || true
+  ps -p "$pid" -o pid,ppid,user,%cpu,%mem,rss,vsz,nlwp,etime,cmd
+  printf 'fds='; ls "/proc/$pid/fd" 2>/dev/null | wc -l
+  printf 'threads='; ls "/proc/$pid/task" 2>/dev/null | wc -l
+  grep -E 'VmRSS|VmSize|RssAnon|RssFile|RssShmem|VmData|VmStk|VmExe|VmLib|Threads' "/proc/$pid/status" || true
 fi
 
-echo '===== CORE FILE EXCERPTS ====='
-for f in src/orca/orca.py src/orca/event_manager.py src/orca/script_manager.py src/orca/speech.py src/orca/script.py; do
-  if [ -f "$f" ]; then
-    echo "--- $f ---"
-    sed -n '1,260p' "$f" | head -260
-  fi
-done
+echo '===== BYTECODE / SYNTAX ====='
+python3 -m compileall -q "$BASE" && echo 'compileall: OK' || echo 'compileall: FAILED'
