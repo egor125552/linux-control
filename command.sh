@@ -1,28 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo '===== CPU / VM ====='
-lscpu
-
-echo '===== CPU MODEL LINES ====='
-grep -m 8 -E 'model name|cpu MHz|cache size|siblings|cpu cores' /proc/cpuinfo || true
-
-echo '===== VCPU COUNT ====='
-echo "nproc: $(nproc)"
-echo "online CPUs: $(cat /sys/devices/system/cpu/online 2>/dev/null || true)"
-
-echo '===== VIRTUALIZATION ====='
-systemd-detect-virt || true
-hostnamectl 2>/dev/null | sed -n '1,40p' || true
-
-echo '===== MEMORY ====='
-free -h
-
-echo '===== STORAGE ====='
-lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
-
-echo '===== LOAD / UPTIME ====='
-uptime
-
-echo '===== KERNEL ====='
+echo '===== KERNEL VERSION ====='
 uname -a
+cat /proc/version
+
+echo '===== /BOOT ====='
+ls -lh /boot | sed -n '1,120p'
+
+echo '===== PROC TOP LEVEL ====='
+find /proc -maxdepth 1 -mindepth 1 -printf '%f\n' 2>/dev/null | sort | sed -n '1,120p'
+
+echo '===== SYS TOP LEVEL ====='
+find /sys -maxdepth 1 -mindepth 1 -printf '%f\n' 2>/dev/null | sort
+
+echo '===== KERNEL RUNTIME VALUES ====='
+printf 'hostname: '; cat /proc/sys/kernel/hostname
+printf 'osrelease: '; cat /proc/sys/kernel/osrelease
+printf 'ostype: '; cat /proc/sys/kernel/ostype
+printf 'pid_max: '; cat /proc/sys/kernel/pid_max
+printf 'threads-max: '; cat /proc/sys/kernel/threads-max
+printf 'randomize_va_space: '; cat /proc/sys/kernel/randomize_va_space
+
+echo '===== LOADED MODULES ====='
+lsmod | sed -n '1,80p'
+
+echo '===== /SYS/KERNEL ====='
+find /sys/kernel -maxdepth 1 -mindepth 1 -printf '%f\n' 2>/dev/null | sort | sed -n '1,120p'
+
+echo '===== INTERRUPTS SUMMARY ====='
+cat /proc/interrupts | sed -n '1,35p'
+
+echo '===== FILESYSTEMS ====='
+cat /proc/filesystems
+
+echo '===== COMMAND LINE ====='
+cat /proc/cmdline
