@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-BASE=/opt/orca-51/lib/python3/dist-packages/orca
-sleep 8
 
-echo '===== ORCA ====='
-pid=$(pgrep -n -x orca || true)
-[ -n "$pid" ] || { echo 'ERROR: Orca missing'; exit 2; }
-ps -p "$pid" -o pid,ppid,user,%cpu,%mem,rss,vsz,nlwp,etime,cmd
+echo '===== INSTALLED BRAILLE PACKAGES ====='
+dpkg-query -W -f='${Package}\t${Status}\t${Version}\n' 2>/dev/null | grep -Ei 'brltty|brlapi|braille' || true
 
-echo '===== SPEECH ====='
-pgrep -a -f 'speech-dispatcher|sd_rhvoice' || true
+echo '===== BRLTTY SERVICE ====='
+systemctl status brltty.service --no-pager -l 2>/dev/null || true
+systemctl status brltty-udev.service --no-pager -l 2>/dev/null || true
 
-echo '===== SERVICES ====='
-systemctl is-active egor-desktop.service
-systemctl is-active audio-remote.service
+echo '===== ORCA BRAILLE SETTING ====='
+sudo -u egor env HOME=/home/egor dbus-run-session gsettings get org.gnome.orca braille-enabled 2>/dev/null || true
 
-echo '===== ORCA DEBUG TAIL ====='
-tail -80 /home/egor/.local/state/orca/orca-debug.log 2>/dev/null || true
+echo '===== APT SIMULATE REMOVE BRLTTY ====='
+apt-get -s remove --purge brltty 2>/dev/null || true
 
-echo '===== ACTIVE OPTIMIZATION ====='
-grep -nE 'app_hash|time.monotonic' "$BASE/event_manager.py" || true
+echo '===== APT SIMULATE REMOVE PYTHON BRLAPI ====='
+apt-get -s remove --purge python3-brlapi 2>/dev/null || true
