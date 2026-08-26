@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# retrigger: 2026-08-26 early-network finalize
+# retrigger: 2026-08-26 early-network finalize clean run
 DEV='eth0'
 IP4='169.58.224.216/17'
 GW4='169.58.128.1'
@@ -68,7 +68,6 @@ DEV=eth0
 ADDR4=169.58.224.216/17
 GW4=169.58.128.1
 
-# Boot must never fail merely because early networking failed.
 modprobe virtio_net 2>/dev/null || true
 
 IPBIN=""
@@ -103,9 +102,6 @@ manual_add_modules virtio_net 2>/dev/null || true
 EOS
 chmod 0755 /etc/initramfs-tools/hooks/egor-early-network-tools
 
-# A local rescue guard: if our early config somehow produces no IPv4 default
-# route after normal userspace starts, remove only our override and regenerate
-# the provider's original netplan configuration.
 cat >/usr/local/sbin/egor-network-rescue <<'EOS'
 #!/bin/sh
 sleep 5
