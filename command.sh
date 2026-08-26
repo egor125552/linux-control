@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# retrigger: 2026-08-26 early-network finalize
 DEV='eth0'
 IP4='169.58.224.216/17'
 GW4='169.58.128.1'
