@@ -1,0 +1,32 @@
+name: Server smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/server-smoke-test.yml
+
+jobs:
+  smoke:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Verify runner and root access
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '===== IDENTITY ====='
+          whoami
+          sudo -n whoami
+          hostname
+
+          echo '===== KERNEL ====='
+          uname -a
+
+          echo '===== MEMORY ====='
+          free -h
+
+          echo '===== UPTIME ====='
+          uptime
