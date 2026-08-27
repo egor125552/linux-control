@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 export PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native'
 export PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE'
 
-echo '===== LOCAL CAPTURE TIMING TEST ====='
-# Feed silence into the real sink so the monitor stays active without making sound.
 python3 - <<'PY' >/tmp/silence.raw
 import sys
-sys.stdout.buffer.write(b'\0\0' * 48000 * 6)
+sys.stdout.buffer.write(b'\0\0' * 48000 * 25)
 PY
 runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" \
   pacat --playback --raw --device=Xpra-Speaker --format=s16le --rate=48000 --channels=1 </tmp/silence.raw >/tmp/pacat.out 2>/tmp/pacat.err &
@@ -16,50 +13,36 @@ player=$!
 
 runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" \
   /opt/audio-remote/.venv/bin/python - <<'PY'
-import asyncio, statistics, sys, time
-sys.path.insert(0, '/opt/audio-remote')
-from audio_remote.audio import PulseAudioTrack
+import asyncio, statistics, time
 
-async def main():
-    t = PulseAudioTrack('Xpra-Speaker.monitor')
+async def measure(lat):
+    p=await asyncio.create_subprocess_exec(
+        'parec','--device=Xpra-Speaker.monitor','--format=s16le','--rate=48000','--channels=1',f'--latency-msec={lat}',
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    assert p.stdout
     times=[]
-    sizes=[]
     prev=time.perf_counter()
     try:
         for i in range(220):
-            f=await asyncio.wait_for(t.recv(), timeout=1.0)
+            await asyncio.wait_for(p.stdout.readexactly(960*2), timeout=1)
             now=time.perf_counter()
-            if i:
-                times.append((now-prev)*1000)
+            if i: times.append((now-prev)*1000)
             prev=now
-            sizes.append(f.samples)
     finally:
-        t.stop()
+        p.terminate()
+        try: await asyncio.wait_for(p.wait(),.5)
+        except: p.kill()
     s=sorted(times)
-    def p(q):
-        return s[min(len(s)-1, int((len(s)-1)*q))]
-    print('frames', len(times)+1)
-    print('samples_unique', sorted(set(sizes)))
-    print('interval_ms_mean', round(statistics.mean(times),3))
-    print('interval_ms_p50', round(p(.50),3))
-    print('interval_ms_p95', round(p(.95),3))
-    print('interval_ms_p99', round(p(.99),3))
-    print('interval_ms_max', round(max(times),3))
-    print('over_25ms', sum(x>25 for x in times))
-    print('over_30ms', sum(x>30 for x in times))
-    print('over_40ms', sum(x>40 for x in times))
-    print('under_10ms', sum(x<10 for x in times))
+    q=lambda x:s[min(len(s)-1,int((len(s)-1)*x))]
+    print(f'LAT={lat} mean={statistics.mean(times):.3f} p50={q(.5):.3f} p95={q(.95):.3f} p99={q(.99):.3f} max={max(times):.3f} gt25={sum(x>25 for x in times)} gt30={sum(x>30 for x in times)} gt40={sum(x>40 for x in times)} lt10={sum(x<10 for x in times)}')
 
+async def main():
+    for lat in (20,30,40,60,80,100,120):
+        await measure(lat)
+        await asyncio.sleep(.25)
 asyncio.run(main())
 PY
-
 wait "$player" || true
 cat /tmp/pacat.err || true
-
-echo '===== PULSE LATENCY DURING/AFTER TEST ====='
-runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list sinks | sed -n '/Имя: Xpra-Speaker/,/Форматы:/p' || true
-
-echo '===== RECENT PULSE WARNINGS ====='
-journalctl -u egor-desktop.service --since '-5 min' --no-pager | grep -Ei 'asyncq|overrun|underrun|drop|buffer|latenc|pulse' | tail -n 120 || true
 
 echo DONE
