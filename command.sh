@@ -11,47 +11,64 @@ COOKIE=$(find /run/egor-desktop /home/egor/.config/pulse /home/egor/.pulse /tmp 
 [ -n "$COOKIE" ] && [ -f "$COOKIE" ] || { echo NO_WORKING_COOKIE; exit 1; }
 PENV=(env HOME=/home/egor DISPLAY="$DISPLAY_VAL" XDG_RUNTIME_DIR="$XDG_VAL" DBUS_SESSION_BUS_ADDRESS="$DBUS_VAL" PULSE_SERVER="$PULSE_SERVER_VAL" PULSE_COOKIE="$COOKIE")
 
-# First verify the output and monitor are present.
-echo '===== PULSE DEVICES ====='
-sudo -u egor "${PENV[@]}" pactl list short sinks
-sudo -u egor "${PENV[@]}" pactl list short sources
-
-# Generate a known continuous signal, play it through the exact Xpra speaker,
-# and record the monitor locally. Any silence here means the server-side audio
-# path itself is breaking before WebRTC/network transport.
 work=/tmp/egor-audio-continuity
 rm -rf "$work" && mkdir -p "$work"
-ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=523.25:sample_rate=48000:duration=10' -ac 2 -c:a pcm_s16le "$work/tone.wav"
+python3 - <<'PY'
+import math, wave, struct
+rate=48000
+dur=10.0
+amp=12000
+with wave.open('/tmp/egor-audio-continuity/tone.wav','wb') as w:
+    w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate)
+    for i in range(int(rate*dur)):
+        s=int(amp*math.sin(2*math.pi*523.25*i/rate))
+        w.writeframesraw(struct.pack('<hh',s,s))
+PY
 
 sudo -u egor "${PENV[@]}" timeout 12 parec --device=Xpra-Speaker.monitor --file-format=wav "$work/capture.wav" >/dev/null 2>&1 &
 rec=$!
-sleep 0.7
+sleep 0.6
 sudo -u egor "${PENV[@]}" paplay --device=Xpra-Speaker "$work/tone.wav"
 wait "$rec" || true
 
-echo '===== LOCAL CONTINUITY ANALYSIS ====='
-ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$work/capture.wav" | sed 's/^/CAPTURE_DURATION=/'
-# Report silence only; a 10-second tone should have no mid-stream silence.
-ffmpeg -hide_banner -nostats -i "$work/capture.wav" -af silencedetect=noise=-45dB:d=0.08 -f null - 2>&1 | grep -E 'silence_(start|end|duration)' || true
+python3 - <<'PY'
+import wave, struct
+p='/tmp/egor-audio-continuity/capture.wav'
+with wave.open(p,'rb') as w:
+    rate=w.getframerate(); ch=w.getnchannels(); n=w.getnframes(); raw=w.readframes(n)
+vals=struct.unpack('<'+'h'*(len(raw)//2),raw)
+mono=[]
+for i in range(0,len(vals),ch):
+    mono.append(max(abs(x) for x in vals[i:i+ch]))
+threshold=250
+silent=[v<threshold for v in mono]
+# Find silence runs >= 80 ms, excluding leading/trailing silence around the 10s playback.
+runs=[]; start=None
+for i,s in enumerate(silent):
+    if s and start is None: start=i
+    if not s and start is not None:
+        if i-start >= int(rate*0.08): runs.append((start/rate,(i-start)/rate))
+        start=None
+if start is not None and len(silent)-start >= int(rate*0.08): runs.append((start/rate,(len(silent)-start)/rate))
+duration=len(mono)/rate
+mid=[r for r in runs if r[0] > 0.4 and r[0]+r[1] < duration-0.4]
+print(f'CAPTURE_DURATION={duration:.3f}')
+print(f'SILENCE_RUNS_TOTAL={len(runs)}')
+print(f'MIDSTREAM_SILENCE_RUNS={len(mid)}')
+for st,d in mid[:20]: print(f'MID_SILENCE start={st:.3f} duration={d:.3f}')
+PY
 
-# Inspect current speech backend after the cookie repair.
 echo '===== RHVOICE CURRENT HEALTH ====='
-tail -n 160 /run/egor-desktop/speech-dispatcher/log/rhvoice.log 2>/dev/null | grep -Ei 'audio|playback|error|started|initialized' | tail -80 || true
+tail -n 180 /run/egor-desktop/speech-dispatcher/log/rhvoice.log 2>/dev/null | grep -Ei 'audio|playback|error|started|initialized' | tail -100 || true
 
-echo '===== SPEECHD CURRENT HEALTH ====='
-find /run/egor-desktop/speech-dispatcher/log -maxdepth 1 -type f -name '*.log' -print0 2>/dev/null \
- | xargs -0 -r grep -H -Ei 'error|audio not initialized|playback stream|broken|underrun|timeout' 2>/dev/null \
- | tail -100 || true
-
-# Inspect only source-code lines relevant to audio transport; never dump env/config secrets.
 echo '===== AUDIO REMOTE IMPLEMENTATION HINTS ====='
 grep -RInE --exclude='*.env' --exclude='*.pem' --exclude='*.key' --exclude='*.json' \
-  'AudioStreamTrack|MediaStreamTrack|AudioFrame|pulse|parec|ffmpeg|sample_rate|samples|pts|time_base|queue|jitter|sleep\(' \
-  /opt/audio-remote/audio_remote 2>/dev/null | head -220 || true
+  'AudioStreamTrack|MediaStreamTrack|AudioFrame|pulse|parec|sample_rate|samples|pts|time_base|queue|jitter|sleep\(' \
+  /opt/audio-remote/audio_remote 2>/dev/null | head -260 || true
 
 echo '===== AUDIO REMOTE RECENT LIVE ERRORS ====='
-journalctl -u audio-remote.service --since '30 minutes ago' --no-pager 2>/dev/null \
+journalctl -u audio-remote.service --since '45 minutes ago' --no-pager 2>/dev/null \
  | grep -Ei 'error|exception|audio|track|packet|rtp|ice|consent|drop|late|jitter|underflow|overflow' \
- | tail -180 || true
+ | tail -220 || true
 
-echo AUDIO_CONTINUITY_ISOLATION_DONE=yes
+echo AUDIO_CONTINUITY_MEASURED=yes
