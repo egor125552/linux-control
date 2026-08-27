@@ -1,62 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 export PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native'
 export PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE'
 pe() { runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" "$@"; }
 
-echo '===== TIME / LOAD ====='
-date -Ins
-uptime
-cat /proc/loadavg
+echo '===== PULSE MODULES ====='
+pe pactl list modules | sed -n '1,520p'
 
-echo '===== LIVE AUDIO PROCESSES ====='
-ps -u egor -o pid=,ppid=,stat=,etimes=,%cpu=,%mem=,comm=,args= | grep -E '[p]arec|[o]rca|[s]peech-dispatcher|[s]d_rhvoice|[p]acat' || true
-
-echo '===== PULSE SHORT ====='
-pe pactl list short sinks || true
-pe pactl list short sources || true
-pe pactl list short sink-inputs || true
-pe pactl list short source-outputs || true
-
-echo '===== XPRA SPEAKER EXACT ====='
-pe pactl list sinks | sed -n '/Имя: Xpra-Speaker/,/Форматы:/p' || pe pactl list sinks | sed -n '/Name: Xpra-Speaker/,/Formats:/p' || true
-
-echo '===== MONITOR EXACT ====='
-pe pactl list sources | sed -n '/Имя: Xpra-Speaker.monitor/,/Форматы:/p' || pe pactl list sources | sed -n '/Name: Xpra-Speaker.monitor/,/Formats:/p' || true
-
-echo '===== PULSE CONFIG RATE KEYS ====='
-grep -RniE 'default-sample-rate|alternate-sample-rate|rate=|sample-rate|resample|fragment|latency' /etc/pulse /etc/xpra /home/egor/.config/pulse 2>/dev/null | head -n 220 || true
-
-echo '===== AUDIO REMOTE SOCKETS ====='
-pid=$(systemctl show audio-remote.service -p MainPID --value)
-echo AUDIO_REMOTE_PID=$pid
-ss -uapn 2>/dev/null | grep -E "pid=$pid|python" | head -n 120 || true
-ss -tapn 2>/dev/null | grep -E "pid=$pid|:8765|python" | head -n 120 || true
-
-echo '===== NETWORK COUNTERS ====='
-ip -s link
-for dev in $(ls /sys/class/net | grep -v '^lo$'); do
-  echo DEV=$dev
-  printf 'rx_dropped='; cat /sys/class/net/$dev/statistics/rx_dropped
-  printf 'tx_dropped='; cat /sys/class/net/$dev/statistics/tx_dropped
-  printf 'rx_errors='; cat /sys/class/net/$dev/statistics/rx_errors
-  printf 'tx_errors='; cat /sys/class/net/$dev/statistics/tx_errors
+echo '===== PULSE PROCESS ====='
+pgrep -a -u egor pulseaudio || true
+for p in $(pgrep -u egor pulseaudio || true); do
+  echo PID=$p
+  tr '\0' ' ' </proc/$p/cmdline; echo
+  echo ENV_RATE_KEYS
+  tr '\0' '\n' </proc/$p/environ 2>/dev/null | grep -Ei 'pulse|rate|xpra|audio|sound' | sort || true
 done
 
-echo '===== QDISC ====='
-tc -s qdisc show 2>/dev/null || true
+echo '===== XPRA PROCESS ====='
+pgrep -a -u egor -f 'xpra' | head -n 80 || true
 
-echo '===== CPU / STEAL 8 SECONDS ====='
-for i in $(seq 1 8); do
-  awk '/^cpu / {print strftime("%H:%M:%S"), $0}' /proc/stat
-  sleep 1
+echo '===== RUNTIME PULSE TREE ====='
+find /run/egor-desktop/xpra/100 -maxdepth 5 -type f -print 2>/dev/null | sort | head -n 260
+for f in $(find /run/egor-desktop/xpra/100 -maxdepth 5 -type f \( -name '*.pa' -o -name '*.conf' -o -name '*.log' \) 2>/dev/null | sort); do
+  echo "--- $f ---"
+  grep -nEi 'null-sink|Xpra-Speaker|Xpra-Microphone|rate|sample|pulse|audio|sound' "$f" 2>/dev/null | tail -n 220 || true
 done
 
-echo '===== AUDIO SERVICE LOG ====='
-journalctl -u audio-remote.service --since '-20 min' --no-pager -n 300 2>&1 || true
+echo '===== SYSTEM XPRA AUDIO CONFIG ====='
+for root in /etc/xpra /usr/share/xpra /usr/lib/python3/dist-packages/xpra; do
+  echo ROOT=$root
+  grep -RniE --exclude='*.pyc' '4800|4410|2400|Xpra-Speaker|Xpra-Microphone|null-sink|sample-rate|pulseaudio-command|pulse.*rate' "$root" 2>/dev/null | head -n 360 || true
+done
 
-echo '===== DESKTOP AUDIO WARNINGS ====='
-journalctl -u egor-desktop.service --since '-20 min' --no-pager 2>&1 | grep -Ei 'pulse|asyncq|overrun|underrun|drop|latenc|buffer|xrun' | tail -n 240 || true
+echo '===== DESKTOP SERVICE ====='
+systemctl cat egor-desktop.service
+systemctl show egor-desktop.service -p Environment -p ExecStart -p FragmentPath --no-pager
+
+echo '===== LAUNCHER / SCRIPTS ====='
+grep -RniE 'xpra|pulse|sound|audio|4800|4410|2400|48000|44100|24000' /usr/local/bin /opt 2>/dev/null | head -n 500 || true
 
 echo DONE
