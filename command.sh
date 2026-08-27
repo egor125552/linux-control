@@ -1,42 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo '===== VERSION ====='
-speech-dispatcher --version 2>&1 || true
-dpkg-query -W -f='${Package} ${Version}\n' speech-dispatcher speech-dispatcher-audio-plugins speech-dispatcher-rhvoice 2>/dev/null || true
+echo '===== RHVOICE PACKAGE SOURCE ====='
+apt-cache show speech-dispatcher-rhvoice 2>/dev/null | grep -E '^(Package|Source|Version|Depends):' | head -n 80 || true
 
-echo '===== CONFIG REFERENCES ====='
-grep -RnsEi 'AudioPulseMinLength|PulseMin|MinLength|Pulse.*Length|AudioOutputMethod|pulse' \
-  /etc/speech-dispatcher /usr/share/doc/speech-dispatcher* /usr/share/speech-dispatcher 2>/dev/null | head -n 500 || true
+echo '===== RHVOICE LDD ====='
+ldd /usr/lib/speech-dispatcher-modules/sd_rhvoice || true
 
-echo '===== SYSTEM SPEECHD CONF RELEVANT ====='
-grep -nEi -C 8 'AudioPulse|AudioOutput|pulse' /etc/speech-dispatcher/speechd.conf 2>/dev/null | head -n 300 || true
+echo '===== RELATED LIBRARIES ====='
+find /usr/lib /lib -type f \( -iname '*speechd*' -o -iname '*spd*pulse*' -o -iname '*rhvoice*' \) 2>/dev/null | sort | head -n 500
 
-echo '===== USER CONF ====='
-nl -ba /home/egor/.config/speech-dispatcher/speechd.conf
-
-echo '===== RHVOICE MODULE CONF ====='
-nl -ba /etc/speech-dispatcher/modules/rhvoice.conf
-
-echo '===== MODULE BINARY STRINGS ====='
-for f in /usr/lib/speech-dispatcher-modules/sd_rhvoice /usr/lib/x86_64-linux-gnu/libspeechd_module.so* /usr/lib/speech-dispatcher-modules/*; do
+echo '===== STRINGS IN LINKED / AUDIO LIBS ====='
+for f in $(ldd /usr/lib/speech-dispatcher-modules/sd_rhvoice 2>/dev/null | awk '/=> \//{print $3}') /usr/lib/x86_64-linux-gnu/speech-dispatcher/spd_pulse.so; do
   [ -f "$f" ] || continue
   echo "--- $f ---"
-  strings "$f" 2>/dev/null | grep -Ei 'AudioPulse|PulseMin|MinLength|pa_buffer|tlength|fragsize|latency|pulse' | head -n 160 || true
+  strings "$f" | grep -Ei 'audio_pulse|min_length|tlength|fragsize|buffer_attr|latency|pa_stream|pulse' | head -n 240 || true
 done
 
-echo '===== PACKAGE FILES ====='
-dpkg -L speech-dispatcher 2>/dev/null | grep -E 'conf|module|doc|example' | head -n 300 || true
-dpkg -L speech-dispatcher-audio-plugins 2>/dev/null | head -n 300 || true
+echo '===== EXPORTED SYMBOLS PULSE ====='
+nm -D /usr/lib/x86_64-linux-gnu/speech-dispatcher/spd_pulse.so 2>/dev/null | grep -Ei 'pulse|audio|open|play|stop|close' | head -n 300 || true
 
-echo '===== MAN / HELP ====='
-MANWIDTH=120 man speech-dispatcher 2>/dev/null | col -b | grep -nEi -C 5 'pulse|latency|audio' | head -n 240 || true
-spd-conf --help 2>&1 | head -n 200 || true
+echo '===== EXPORTED SYMBOLS RHVOICE ====='
+nm -D /usr/lib/speech-dispatcher-modules/sd_rhvoice 2>/dev/null | head -n 300 || true
 
-echo '===== LIVE RHVOICE ENV ====='
-for p in $(pgrep -u egor -x sd_rhvoice || true); do
-  echo "PID=$p"
-  tr '\0' '\n' </proc/$p/environ | sort | grep -E 'PULSE|SPD|SPEECH|HOME|XDG|DISPLAY' || true
-done
+echo '===== APT SOURCE AVAILABILITY ====='
+apt-cache showsrc speech-dispatcher 2>&1 | head -n 100 || true
+apt-cache showsrc rhvoice 2>&1 | head -n 100 || true
 
 echo DONE
