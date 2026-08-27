@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+echo '===== AUDIO.PY ====='
+sed -n '1,240p' /opt/audio-remote/audio_remote/audio.py 2>/dev/null || true
+
+echo '===== SERVER.PY WEBRTC RELEVANT ====='
+sed -n '1,320p' /opt/audio-remote/audio_remote/server.py 2>/dev/null \
+ | sed -E 's#(token|password|secret|authorization)([^=]*=).*#\1\2<redacted>#Ig' || true
+
+echo '===== OTHER WEBRTC FILES ====='
+for f in /opt/audio-remote/audio_remote/*.py; do
+  case "$f" in */audio.py|*/server.py) continue;; esac
+  if grep -qE 'RTCPeerConnection|addTrack|connectionState|iceConnectionState|PulseAudioTrack|peer' "$f" 2>/dev/null; then
+    echo "FILE=$f"
+    grep -nE 'RTCPeerConnection|addTrack|connectionState|iceConnectionState|PulseAudioTrack|peer|close\(' "$f" | head -220
+  fi
+done
+
 mate_pid=$(pgrep -u egor -x mate-session | head -1 || true)
 [ -n "$mate_pid" ] || { echo NO_MATE_SESSION; exit 1; }
 getenvp(){ local p="$1" k="$2"; tr '\0' '\n' < "/proc/$p/environ" | sed -n "s/^${k}=//p" | head -1; }
@@ -12,8 +29,8 @@ COOKIE=$(find /run/egor-desktop /home/egor/.config/pulse /home/egor/.pulse /tmp 
 PENV=(env HOME=/home/egor DISPLAY="$DISPLAY_VAL" XDG_RUNTIME_DIR="$XDG_VAL" DBUS_SESSION_BUS_ADDRESS="$DBUS_VAL" PULSE_SERVER="$PULSE_SERVER_VAL" PULSE_COOKIE="$COOKIE")
 
 work=/tmp/egor-audio-continuity
-rm -rf "$work" && mkdir -p "$work"
-python3 - <<'PY'
+rm -rf "$work" && mkdir -p "$work" && chown egor:egor "$work"
+sudo -u egor python3 - <<'PY'
 import math, wave, struct
 rate=48000; dur=10.0; amp=12000
 with wave.open('/tmp/egor-audio-continuity/tone.wav','wb') as w:
@@ -31,46 +48,37 @@ sleep 0.6
 sudo -u egor "${PENV[@]}" paplay --device=Xpra-Speaker "$work/tone.wav"
 wait "$rec" || true
 
-if [ ! -s "$work/capture.wav" ]; then
-  echo CAPTURE_CREATED=no
-else
+if [ -s "$work/capture.wav" ]; then
   echo CAPTURE_CREATED=yes
   python3 - <<'PY'
 import wave, struct
 p='/tmp/egor-audio-continuity/capture.wav'
 with wave.open(p,'rb') as w:
-    rate=w.getframerate(); ch=w.getnchannels(); n=w.getnframes(); raw=w.readframes(n)
+    rate=w.getframerate(); ch=w.getnchannels(); raw=w.readframes(w.getnframes())
 vals=struct.unpack('<'+'h'*(len(raw)//2),raw)
 mono=[max(abs(x) for x in vals[i:i+ch]) for i in range(0,len(vals),ch)]
 threshold=250
-silent=[v<threshold for v in mono]
 runs=[]; start=None
-for i,s in enumerate(silent):
+for i,v in enumerate(mono):
+    s=v<threshold
     if s and start is None: start=i
     elif not s and start is not None:
         if i-start >= int(rate*0.08): runs.append((start/rate,(i-start)/rate))
         start=None
-if start is not None and len(silent)-start >= int(rate*0.08): runs.append((start/rate,(len(silent)-start)/rate))
-duration=len(mono)/rate
-mid=[r for r in runs if r[0] > 0.4 and r[0]+r[1] < duration-0.4]
-print(f'CAPTURE_DURATION={duration:.3f}')
-print(f'SILENCE_RUNS_TOTAL={len(runs)}')
+if start is not None and len(mono)-start >= int(rate*0.08): runs.append((start/rate,(len(mono)-start)/rate))
+dur=len(mono)/rate
+# The tone begins about 0.6 sec after recording and lasts 10 sec.
+mid=[r for r in runs if r[0] > 0.8 and r[0]+r[1] < 10.4]
+print(f'CAPTURE_DURATION={dur:.3f}')
 print(f'MIDSTREAM_SILENCE_RUNS={len(mid)}')
-for st,d in mid[:20]: print(f'MID_SILENCE start={st:.3f} duration={d:.3f}')
+for st,d in mid[:30]: print(f'MID_SILENCE start={st:.3f} duration={d:.3f}')
 PY
+else
+  echo CAPTURE_CREATED=no
 fi
 
-echo '===== RHVOICE CURRENT HEALTH ====='
-tail -n 180 /run/egor-desktop/speech-dispatcher/log/rhvoice.log 2>/dev/null | grep -Ei 'audio|playback|error|started|initialized' | tail -100 || true
+echo '===== CURRENT CONNECTION COUNTS ====='
+ps -ef | grep -E '[p]arec|[a]udio_remote' || true
+ss -uapn 2>/dev/null | grep -E 'python|audio-remote' | head -120 || true
 
-echo '===== AUDIO REMOTE IMPLEMENTATION HINTS ====='
-grep -RInE --exclude='*.env' --exclude='*.pem' --exclude='*.key' --exclude='*.json' \
-  'AudioStreamTrack|MediaStreamTrack|AudioFrame|pulse|parec|sample_rate|samples|pts|time_base|queue|jitter|sleep\(' \
-  /opt/audio-remote/audio_remote 2>/dev/null | head -320 || true
-
-echo '===== AUDIO REMOTE RECENT LIVE ERRORS ====='
-journalctl -u audio-remote.service --since '45 minutes ago' --no-pager 2>/dev/null \
- | grep -Ei 'error|exception|audio|track|packet|rtp|ice|consent|drop|late|jitter|underflow|overflow' \
- | tail -220 || true
-
-echo AUDIO_CONTINUITY_MEASURED=yes
+echo WEBRTC_AUDIO_TRANSPORT_INSPECT_DONE=yes
