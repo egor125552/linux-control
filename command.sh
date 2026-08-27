@@ -1,67 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+echo '===== /etc/pulse/daemon.conf ACTIVE LINES ====='
+nl -ba /etc/pulse/daemon.conf | grep -Ev '^[[:space:]]*[0-9]+[[:space:]]+[;#]?[[:space:]]*$' | grep -E 'default-sample-rate|alternate-sample-rate|default-sample-format|resample-method|avoid-resampling|default-fragments|default-fragment-size-msec|realtime|high-priority' || true
+
+echo '===== EXACT BAD RATE SEARCH IN PULSE CONFIG ====='
+grep -RnsE --binary-files=without-match '(^|[^0-9])(4800|4410|2400)([^0-9]|$)|default-sample-rate|alternate-sample-rate' /etc/pulse /home/egor/.config/pulse 2>/dev/null || true
+
+echo '===== PULSEAUDIO DUMP CONF AS EGOR ====='
+runuser -u egor -- pulseaudio --dump-conf 2>&1 | grep -E 'default-sample-rate|alternate-sample-rate|default-sample-format|resample-method|avoid-resampling|default-fragments|default-fragment-size-msec|realtime|high-priority' || true
+
+echo '===== LIVE SERVER/SINK RATE ====='
 export PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native'
 export PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE'
-pe() { runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" "$@"; }
+runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sinks
+runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sources
 
-echo '===== CURRENT XPRA.PA EXACT ====='
-stat /etc/xpra/pulse/xpra.pa
-nl -ba /etc/xpra/pulse/xpra.pa
+echo '===== SPEECH DISPATCHER RATE CONFIG ====='
+grep -RnsEi --binary-files=without-match '2400|24000|sample.*rate|rate|frequency' /etc/speech-dispatcher /home/egor/.config/speech-dispatcher /etc/RHVoice /home/egor/.config/RHVoice 2>/dev/null | head -n 260 || true
 
-echo '===== XPRA.PA BACKUPS / NEIGHBORS ====='
-find /etc/xpra/pulse -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' | sort
-for f in /etc/xpra/pulse/xpra.pa*; do
-  [ -f "$f" ] || continue
-  echo "--- $f ---"
-  grep -nE 'Xpra-Speaker|Xpra-Microphone|rate=' "$f" || true
-done
-
-echo '===== ACTIVE BAD MODULES EXACT ====='
-pe pactl list modules | awk '
-  /^Модуль #|^Module #/ {show=0; block=$0"\n"}
-  {block=block $0"\n"}
-  /sink_name=Xpra-Speaker|sink_name=Xpra-Microphone/ {show=1}
-  /^$/ {if(show) printf "%s", block; block=""; show=0}
-'
-
-echo '===== PULSE PROCESS COMMAND ====='
-for p in $(pgrep -u egor pulseaudio || true); do
-  echo PID=$p
-  tr '\0' ' ' </proc/$p/cmdline; echo
-  echo START=$(ps -o lstart= -p "$p")
-done
-
-echo '===== XPRA MAIN COMMAND ====='
-for p in $(pgrep -u egor -f 'xpra.*(start|seamless|desktop|server)' || true); do
-  echo PID=$p
-  tr '\0' ' ' </proc/$p/cmdline; echo
-done
-
-echo '===== EXACT BAD RATE SEARCH CONFIG ====='
-for root in /etc /home/egor/.config /home/egor/.xpra /usr/local/bin /opt/audio-remote; do
-  [ -e "$root" ] || continue
-  echo ROOT=$root
-  grep -RnsE --binary-files=without-match --exclude='*.pyc' --exclude='*.log' --exclude-dir=.venv \
-    'rate=4800([^0-9]|$)|rate=4410([^0-9]|$)|4800Hz|4410Hz|Xpra-Speaker.*4800|Xpra-Microphone.*4410' "$root" 2>/dev/null | head -n 240 || true
-done
-
-echo '===== XPRA CODE SINK CREATION SEARCH ====='
-for root in /usr/lib/python3/dist-packages/xpra /usr/share/xpra /usr/libexec/xpra; do
-  [ -e "$root" ] || continue
-  echo ROOT=$root
-  grep -RnsE --binary-files=without-match --exclude='*.pyc' \
-    'Xpra-Speaker|Xpra-Microphone|module-null-sink|load-module.*null-sink|pulseaudio.*configure|speaker.*rate|microphone.*rate' "$root" 2>/dev/null | head -n 420 || true
-done
-
-echo '===== STARTUP JOURNAL RATE/MODULE EVENTS ====='
-journalctl -u egor-desktop.service --since today --no-pager 2>&1 | \
-  grep -Ei 'pulse|Xpra-Speaker|Xpra-Microphone|null-sink|4800|4410|rate|module' | head -n 600 || true
-
-echo '===== RECENT SHELL HISTORY RATE HITS ====='
-for f in /root/.bash_history /home/egor/.bash_history; do
-  [ -r "$f" ] || continue
-  echo "--- $f ---"
-  grep -nE '4800|4410|Xpra-Speaker|Xpra-Microphone|xpra.pa|null-sink' "$f" | tail -n 120 || true
-done
+echo '===== RECENT OVERRUN COUNT ====='
+c=$(journalctl -u egor-desktop.service --since today --no-pager 2>/dev/null | grep -c 'asyncq.c: q overrun' || true)
+echo ASYNCQ_OVERRUNS_TODAY=$c
+journalctl -u egor-desktop.service --since today --no-pager 2>/dev/null | grep 'asyncq.c: q overrun' | tail -n 30 || true
 
 echo DONE
