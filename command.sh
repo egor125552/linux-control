@@ -1,33 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo '===== WAIT FOR LIVE WEBRTC CAPTURE ====='
-found=no
-for i in $(seq 1 20); do
-  if pgrep -u egor -x parec >/dev/null 2>&1; then
-    found=yes
-    break
-  fi
-  sleep 0.5
-done
+app=/opt/audio-remote/audio_remote/static/app.js
+stamp=$(date +%Y%m%d-%H%M%S)
+cp -a "$app" "/opt/audio-remote/audio_remote/static/app.js.before-reconnect-$stamp"
+python3 - <<'PY'
+p='/opt/audio-remote/audio_remote/static/app.js'
+s=open(p,encoding='utf-8').read()
+old='''  const pc = new RTCPeerConnection();\n  let ws = null;\n\n  try {'''
+new='''  const pc = new RTCPeerConnection();\n  let ws = null;\n  let retryAfterFailure = false;\n\n  try {'''
+if old not in s:
+    raise SystemExit('RECONNECT_DECLARATION_MARKER_NOT_FOUND')
+s=s.replace(old,new,1)
+old2='''  } catch {\n    if (myGeneration === generation) {\n      setStatus("Связь восстанавливается…");\n      scheduleReconnect();\n    }\n    await closePeer(pc);\n    try { ws?.close(); } catch {}\n  } finally {\n    connecting = false;\n  }'''
+new2='''  } catch {\n    if (myGeneration === generation) {\n      setStatus("Связь восстанавливается…");\n      retryAfterFailure = true;\n    }\n    await closePeer(pc);\n    try { ws?.close(); } catch {}\n  } finally {\n    connecting = false;\n    if (retryAfterFailure && myGeneration === generation) scheduleReconnect();\n  }'''
+if old2 not in s:
+    raise SystemExit('RECONNECT_CATCH_MARKER_NOT_FOUND')
+s=s.replace(old2,new2,1)
+open(p,'w',encoding='utf-8').write(s)
+PY
+chown egor:egor "$app"
 
-echo "PAREC_ACTIVE=$found"
-ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep -E '[p]arec|[a]udio_remote|[p]ython' | tail -n 40 || true
+echo '===== PATCHED RECONNECT BLOCK ====='
+grep -n -A18 -B5 'retryAfterFailure' "$app"
 
-echo '===== WEBRTC JOURNAL AFTER RESTART ====='
-journalctl -u audio-remote.service --since '2026-08-27 15:29:09' --no-pager -n 200 2>&1 || true
-
-if [ "$found" = yes ]; then
-  echo '===== SEND LONG SPEECH TEST ====='
-  runuser -u egor -- env \
-    HOME=/home/egor \
-    XDG_RUNTIME_DIR=/run/egor-desktop \
-    PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native' \
-    PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE' \
-    spd-say -w 'Проверка нового звука. Раз, два, три, четыре, пять. Сейчас речь должна идти ровно, без резких обрывов и без вываливания слов кусками.'
-  echo LONG_AUDIO_TEST_SENT=yes
+if command -v node >/dev/null 2>&1; then
+  node --check "$app"
+  echo JS_SYNTAX_OK=yes
 else
-  echo LONG_AUDIO_TEST_SENT=no
+  echo JS_SYNTAX_CHECK_SKIPPED=node_missing
 fi
 
-echo DONE
+echo '===== SERVICE STILL ACTIVE ====='
+systemctl is-active audio-remote.service
+systemctl show audio-remote.service -p MainPID --no-pager
+
+echo RECONNECT_FIX_INSTALLED=yes
