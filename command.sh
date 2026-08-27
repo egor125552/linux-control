@@ -8,35 +8,47 @@ DISPLAY_VAL=$(getv DISPLAY); [ -n "$DISPLAY_VAL" ] || DISPLAY_VAL=:100
 XDG_VAL=$(getv XDG_RUNTIME_DIR); [ -n "$XDG_VAL" ] || XDG_VAL=/run/egor-desktop
 RUNENV=(env HOME=/home/egor DISPLAY="$DISPLAY_VAL" XDG_RUNTIME_DIR="$XDG_VAL" DBUS_SESSION_BUS_ADDRESS="$DBUS_VAL")
 
-echo '===== ORCA PROCESSES ====='
-pgrep -a -u egor -x orca || true
-pgrep -a -u egor -f '/opt/orca-51/bin/orca' || true
+echo '===== BEFORE RECOVERY ====='
+ps -u egor -o pid=,ppid=,stat=,comm=,args= | grep -Ei '[o]rca|speech-dispatcher' || true
 
-echo '===== STARTUP LOG ====='
-tail -n 120 /home/egor/.local/state/orca/manual-restart.log 2>/dev/null || true
+# Stop every live Orca process belonging to this desktop. Zombies cannot be killed;
+# they disappear when their parent reaps them and do not own D-Bus names.
+for p in $(pgrep -u egor -f '(^|/)(orca|orca\.real)( |$)|/opt/orca-51/bin/orca' || true); do
+  state=$(ps -o stat= -p "$p" 2>/dev/null | tr -d ' ' || true)
+  case "$state" in Z*) continue;; esac
+  kill "$p" 2>/dev/null || true
+done
+sleep 0.8
 
-echo '===== EXTENSION RUNTIME MARKERS ====='
-grep -E 'EGOR ACCESSIBILITY: VoiceOver-like|Virtual cursor|Traceback|CRITICAL|ERROR' /home/egor/.local/state/orca/orca-debug.log 2>/dev/null | tail -n 100 || true
+# Start Orca 51 explicitly with --replace once for recovery. This releases any
+# stale single-instance ownership and loads the new extension in the live session.
+sudo -u egor "${RUNENV[@]}" bash -c '
+  export RUNNER_TRACKING_ID=
+  export PATH="/opt/orca-51/bin:$PATH"
+  export LD_LIBRARY_PATH="/opt/orca-51/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export GI_TYPELIB_PATH="/opt/orca-51/lib/x86_64-linux-gnu/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+  export PYTHONPATH="/opt/orca-51/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+  export GSETTINGS_SCHEMA_DIR=/opt/orca-51/share/glib-2.0/schemas
+  mkdir -p "$HOME/.local/state/orca"
+  setsid -f /opt/orca-51/bin/orca --replace --debug-file "$HOME/.local/state/orca/orca-debug.log" >"$HOME/.local/state/orca/recovery.log" 2>&1
+'
 
-echo '===== AT-SPI RUNTIME API ====='
-sudo -u egor "${RUNENV[@]}" python3 - <<'PY'
-import gi
-gi.require_version('Atspi','2.0')
-from gi.repository import Atspi
-try:
-    d=Atspi.get_desktop(0)
-    print('ATSPI_GET_DESKTOP_OK=yes')
-    print('DESKTOP_CHILDREN=',d.get_child_count())
-    for i in range(min(d.get_child_count(),20)):
-        a=d.get_child_at_index(i)
-        try: print('APP',i,repr(a.get_name()),'children=',a.get_child_count())
-        except Exception as e: print('APPERR',i,repr(e))
-except Exception as e:
-    print('ATSPI_GET_DESKTOP_OK=no')
-    print('ATSPI_ERROR=',repr(e))
-PY
+for i in $(seq 1 60); do
+  if pgrep -u egor -f '/opt/orca-51/bin/orca' >/dev/null 2>&1; then break; fi
+  sleep 0.25
+done
+sleep 1
 
-echo '===== RECENT ORCA ERRORS ====='
-tail -n 240 /home/egor/.local/state/orca/orca-debug.log 2>/dev/null | grep -Ei 'traceback|exception|error|critical|egor accessibility' | tail -n 120 || true
+echo '===== AFTER RECOVERY ====='
+ps -u egor -o pid=,ppid=,stat=,comm=,args= | grep -Ei '[o]rca|speech-dispatcher' || true
 
-echo ORCA_VIRTUAL_CURSOR_RUNTIME_CHECK_DONE=yes
+echo '===== RECOVERY LOG ====='
+tail -n 100 /home/egor/.local/state/orca/recovery.log 2>/dev/null || true
+
+echo '===== EXTENSION LOAD ====='
+grep -E 'EGOR ACCESSIBILITY: VoiceOver-like virtual cursor active|Traceback|CRITICAL|ERROR' /home/egor/.local/state/orca/orca-debug.log 2>/dev/null | tail -n 80 || true
+
+live=$(ps -u egor -o stat=,args= | grep '/opt/orca-51/bin/orca' | grep -v grep | grep -v '^Z' || true)
+[ -n "$live" ] || { echo ORCA_LIVE=no; exit 1; }
+echo ORCA_LIVE=yes
+echo ORCA_RECOVERY_DONE=yes
