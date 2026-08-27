@@ -1,35 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-live=$(pgrep -u egor -x orca | while read -r p; do st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null || true); [ "$st" != Z ] && echo "$p"; done | tail -1)
-[ -n "$live" ] || { echo NO_LIVE_ORCA; exit 1; }
+server='unix:/run/egor-desktop/xpra/100/pulse/native'
+echo "PULSE_SERVER=$server"
 
-echo "LIVE_ORCA_PID=$live"
+if [ ! -S /run/egor-desktop/xpra/100/pulse/native ]; then
+  echo PULSE_SOCKET_MISSING
+  exit 1
+fi
 
-envfile="/proc/$live/environ"
-pserver=$(tr '\0' '\n' < "$envfile" | sed -n 's/^PULSE_SERVER=//p' | tail -1)
-pcookie=$(tr '\0' '\n' < "$envfile" | sed -n 's/^PULSE_COOKIE=//p' | tail -1)
-xruntime=$(tr '\0' '\n' < "$envfile" | sed -n 's/^XDG_RUNTIME_DIR=//p' | tail -1)
+mapfile -t candidates < <(find /run/egor-desktop /home/egor/.config/pulse /home/egor/.pulse /tmp \
+  -maxdepth 8 -type f -user egor -size 256c 2>/dev/null \
+  | grep -Ei 'cookie' | sort -u)
 
-echo "PULSE_SERVER=${pserver:-<missing>}"
-if [ -n "$pcookie" ]; then
-  echo PULSE_COOKIE_SET=yes
-  if [ -r "$pcookie" ]; then
-    echo PULSE_COOKIE_READABLE=yes
-    stat -c 'PULSE_COOKIE_SIZE=%s' "$pcookie" || true
+echo "COOKIE_CANDIDATES=${#candidates[@]}"
+working=''
+for c in "${candidates[@]}"; do
+  echo "TEST_COOKIE=$c"
+  if runuser -u egor -- env HOME=/home/egor PULSE_SERVER="$server" PULSE_COOKIE="$c" pactl info >/tmp/pactl-test.out 2>/tmp/pactl-test.err; then
+    echo COOKIE_WORKS=yes
+    cat /tmp/pactl-test.out
+    working="$c"
+    break
   else
-    echo PULSE_COOKIE_READABLE=no
+    echo COOKIE_WORKS=no
+    tail -n 3 /tmp/pactl-test.err || true
   fi
-else
-  echo PULSE_COOKIE_SET=no
-fi
-echo "XDG_RUNTIME_DIR=${xruntime:-<missing>}"
+done
 
-echo '===== PACTL TEST AS EGOR ====='
-if command -v pactl >/dev/null 2>&1; then
-  runuser -u egor -- env HOME=/home/egor XDG_RUNTIME_DIR="${xruntime:-/run/user/$(id -u egor)}" PULSE_SERVER="$pserver" PULSE_COOKIE="$pcookie" pactl info || true
-  echo '===== SINKS ====='
-  runuser -u egor -- env HOME=/home/egor XDG_RUNTIME_DIR="${xruntime:-/run/user/$(id -u egor)}" PULSE_SERVER="$pserver" PULSE_COOKIE="$pcookie" pactl list short sinks || true
-else
-  echo NO_PACTL
+if [ -z "$working" ]; then
+  echo NO_WORKING_COOKIE
+  exit 1
 fi
+
+echo "WORKING_COOKIE=$working"
+echo '===== SINKS ====='
+runuser -u egor -- env HOME=/home/egor PULSE_SERVER="$server" PULSE_COOKIE="$working" pactl list short sinks
