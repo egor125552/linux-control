@@ -2,34 +2,27 @@
 set -euo pipefail
 export PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native'
 export PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE'
+pe() { runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" "$@"; }
 
-echo '===== C LOCALE SHORT SINKS/SOURCES ====='
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sinks
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sources
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sink-inputs
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short source-outputs
+echo '===== SINK INPUTS FULL ====='
+pe pactl list sink-inputs
 
-echo '===== C LOCALE FULL SPECS ====='
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list sinks | sed -n '/Name: Xpra-Speaker/,/Formats:/p'
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list sources | sed -n '/Name: Xpra-Speaker.monitor/,/Formats:/p'
+echo '===== SOURCE OUTPUTS FULL ====='
+pe pactl list source-outputs
 
-echo '===== RAW SHORT OUTPUT HEX ====='
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sinks | od -An -tx1c
+echo '===== CLIENTS FULL ====='
+pe pactl list clients
 
-echo '===== JSON IF SUPPORTED ====='
-if runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl --format=json list sinks >/tmp/sinks.json 2>/tmp/json.err; then
-  python3 - <<'PY'
-import json
-x=json.load(open('/tmp/sinks.json'))
-for s in x:
-    if s.get('name')=='Xpra-Speaker':
-        print(json.dumps({k:s.get(k) for k in ('name','sample_specification','state','latency','configured_latency')}, ensure_ascii=False, indent=2))
-PY
-else
-  cat /tmp/json.err || true
-fi
+echo '===== SINK LATENCY SNAPSHOTS ====='
+for i in $(seq 1 20); do
+  printf '%s ' "$(date +%H:%M:%S.%3N)"
+  pe pactl --format=json list sinks | python3 -c 'import json,sys; x=json.load(sys.stdin); s=next(v for v in x if v.get("name")=="Xpra-Speaker"); print("actual_us=%s configured_us=%s state=%s" % (s.get("latency",{}).get("actual"),s.get("latency",{}).get("configured"),s.get("state")))'
+  sleep .25
+done
 
-echo '===== SERVER INFO ====='
-runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl info
+echo '===== PROCESS PRIORITIES ====='
+for p in $(pgrep -u egor -f 'pulseaudio|sd_rhvoice|speech-dispatcher|parec|audio_remote' || true); do
+  ps -o pid=,ppid=,cls=,rtprio=,pri=,ni=,psr=,%cpu=,%mem=,stat=,comm=,args= -p "$p"
+done
 
 echo DONE
