@@ -1,34 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-zpid=75350
+echo '===== LIVE ORCA ====='
+ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep '[o]rca' || true
 
-if [ ! -r "/proc/$zpid/stat" ]; then
-  echo ZOMBIE_ALREADY_GONE=yes
-  exit 0
-fi
+echo '===== SPEECH DISPATCHER PROCESSES ====='
+ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep '[s]peech-dispatcher' || true
+pgrep -a -u egor speech-dispatcher || true
 
-state=$(awk '{print $3}' "/proc/$zpid/stat")
-ppid=$(awk '{print $4}' "/proc/$zpid/stat")
-echo "BEFORE pid=$zpid state=$state ppid=$ppid"
-ps -p "$zpid,$ppid" -o pid=,ppid=,stat=,etimes=,comm=,args= || true
-
-if [ "$state" != Z ]; then
-  echo TARGET_NOT_ZOMBIE=yes
-  exit 0
-fi
-
-# A zombie cannot be killed; ask its parent to reap exited children.
-kill -s CHLD "$ppid" || true
-sleep 1
-
-if [ -e "/proc/$zpid" ]; then
-  state2=$(awk '{print $3}' "/proc/$zpid/stat" 2>/dev/null || echo gone)
-  echo "AFTER pid=$zpid state=$state2"
-  ps -p "$zpid,$ppid" -o pid=,ppid=,stat=,etimes=,comm=,args= || true
-  if [ "$state2" = Z ]; then
-    echo ZOMBIE_STILL_PRESENT=yes
-  fi
+echo '===== ORCA DEBUG TAIL ====='
+if [ -f /home/egor/.local/state/orca/orca-debug.log ]; then
+  tail -n 160 /home/egor/.local/state/orca/orca-debug.log
 else
-  echo ZOMBIE_REAPED=yes
+  echo NO_ORCA_DEBUG_LOG
 fi
+
+echo '===== SPEECH DISPATCHER FILES ====='
+find /home/egor/.config/speech-dispatcher /home/egor/.cache/speech-dispatcher /home/egor/.local/state -maxdepth 3 -type f 2>/dev/null | head -80 || true
+
+echo '===== RECENT SPEECH DISPATCHER LOGS ====='
+for f in /home/egor/.cache/speech-dispatcher/log/* /home/egor/.local/state/speech-dispatcher/*; do
+  [ -f "$f" ] || continue
+  echo "--- $f ---"
+  tail -n 80 "$f" || true
+done
+
+echo '===== PULSE ====='
+ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep '[p]ulseaudio' || true
+ss -xlpn 2>/dev/null | grep -E 'pulse|speech-dispatcher' || true
