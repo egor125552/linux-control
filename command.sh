@@ -1,27 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-echo '===== /etc/pulse/daemon.conf ACTIVE LINES ====='
-nl -ba /etc/pulse/daemon.conf | grep -Ev '^[[:space:]]*[0-9]+[[:space:]]+[;#]?[[:space:]]*$' | grep -E 'default-sample-rate|alternate-sample-rate|default-sample-format|resample-method|avoid-resampling|default-fragments|default-fragment-size-msec|realtime|high-priority' || true
-
-echo '===== EXACT BAD RATE SEARCH IN PULSE CONFIG ====='
-grep -RnsE --binary-files=without-match '(^|[^0-9])(4800|4410|2400)([^0-9]|$)|default-sample-rate|alternate-sample-rate' /etc/pulse /home/egor/.config/pulse 2>/dev/null || true
-
-echo '===== PULSEAUDIO DUMP CONF AS EGOR ====='
-runuser -u egor -- pulseaudio --dump-conf 2>&1 | grep -E 'default-sample-rate|alternate-sample-rate|default-sample-format|resample-method|avoid-resampling|default-fragments|default-fragment-size-msec|realtime|high-priority' || true
-
-echo '===== LIVE SERVER/SINK RATE ====='
 export PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native'
 export PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE'
-runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sinks
-runuser -u egor -- env PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sources
 
-echo '===== SPEECH DISPATCHER RATE CONFIG ====='
-grep -RnsEi --binary-files=without-match '2400|24000|sample.*rate|rate|frequency' /etc/speech-dispatcher /home/egor/.config/speech-dispatcher /etc/RHVoice /home/egor/.config/RHVoice 2>/dev/null | head -n 260 || true
+echo '===== C LOCALE SHORT SINKS/SOURCES ====='
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sinks
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sources
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sink-inputs
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short source-outputs
 
-echo '===== RECENT OVERRUN COUNT ====='
-c=$(journalctl -u egor-desktop.service --since today --no-pager 2>/dev/null | grep -c 'asyncq.c: q overrun' || true)
-echo ASYNCQ_OVERRUNS_TODAY=$c
-journalctl -u egor-desktop.service --since today --no-pager 2>/dev/null | grep 'asyncq.c: q overrun' | tail -n 30 || true
+echo '===== C LOCALE FULL SPECS ====='
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list sinks | sed -n '/Name: Xpra-Speaker/,/Formats:/p'
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list sources | sed -n '/Name: Xpra-Speaker.monitor/,/Formats:/p'
+
+echo '===== RAW SHORT OUTPUT HEX ====='
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl list short sinks | od -An -tx1c
+
+echo '===== JSON IF SUPPORTED ====='
+if runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl --format=json list sinks >/tmp/sinks.json 2>/tmp/json.err; then
+  python3 - <<'PY'
+import json
+x=json.load(open('/tmp/sinks.json'))
+for s in x:
+    if s.get('name')=='Xpra-Speaker':
+        print(json.dumps({k:s.get(k) for k in ('name','sample_specification','state','latency','configured_latency')}, ensure_ascii=False, indent=2))
+PY
+else
+  cat /tmp/json.err || true
+fi
+
+echo '===== SERVER INFO ====='
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pactl info
 
 echo DONE
