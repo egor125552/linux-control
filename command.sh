@@ -1,37 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 mate_pid=$(pgrep -u egor -x mate-session | head -1 || true)
-pulse_pid=$(pgrep -u egor -x pulseaudio | head -1 || true)
-xpra_pid=$(ps -o ppid= -p "$pulse_pid" 2>/dev/null | xargs || true)
-[ -n "$mate_pid" ] && [ -n "$pulse_pid" ] && [ -n "$xpra_pid" ] || { echo MISSING_PROCESS; exit 1; }
+[ -n "$mate_pid" ] || { echo NO_MATE_SESSION; exit 1; }
 getenvp(){ local p="$1" k="$2"; tr '\0' '\n' < "/proc/$p/environ" | sed -n "s/^${k}=//p" | head -1; }
+DISPLAY_VAL=$(getenvp "$mate_pid" DISPLAY); [ -n "$DISPLAY_VAL" ] || DISPLAY_VAL=:100
+XDG_VAL=$(getenvp "$mate_pid" XDG_RUNTIME_DIR); [ -n "$XDG_VAL" ] || XDG_VAL=/run/egor-desktop
+DBUS_VAL=$(getenvp "$mate_pid" DBUS_SESSION_BUS_ADDRESS)
+PULSE_SERVER_VAL=$(getenvp "$mate_pid" PULSE_SERVER)
+COOKIE=$(find /run/egor-desktop /home/egor/.config/pulse /home/egor/.pulse /tmp -maxdepth 5 -type f \( -name cookie -o -name '*cookie*' \) -user egor -size 256c 2>/dev/null | head -1 || true)
+[ -n "$COOKIE" ] || { echo COOKIE_CANDIDATE=no; exit 1; }
+echo COOKIE_CANDIDATE=yes
+printf 'COOKIE_HASH_PREFIX='; sha256sum "$COOKIE" | cut -c1-16
 
-echo "XPRA_PID=$xpra_pid"
-for who in xpra pulse mate; do
-  case "$who" in xpra) p=$xpra_pid;; pulse) p=$pulse_pid;; mate) p=$mate_pid;; esac
-  cookie=$(getenvp "$p" PULSE_COOKIE)
-  server=$(getenvp "$p" PULSE_SERVER)
-  printf '%s PULSE_COOKIE present: ' "$who"; [ -n "$cookie" ] && echo yes || echo no
-  printf '%s PULSE_SERVER present: ' "$who"; [ -n "$server" ] && echo yes || echo no
-  if [ -n "$cookie" ]; then
-    printf '%s cookie exists: ' "$who"; [ -f "$cookie" ] && echo yes || echo no
-    printf '%s cookie path hash: ' "$who"; printf '%s' "$cookie" | sha256sum | cut -c1-16
-    if [ -f "$cookie" ]; then printf '%s cookie file hash: ' "$who"; sha256sum "$cookie" | cut -c1-16; fi
-  fi
-done
+echo '===== PACTL TEST ====='
+if sudo -u egor env HOME=/home/egor DISPLAY="$DISPLAY_VAL" XDG_RUNTIME_DIR="$XDG_VAL" DBUS_SESSION_BUS_ADDRESS="$DBUS_VAL" PULSE_SERVER="$PULSE_SERVER_VAL" PULSE_COOKIE="$COOKIE" pactl info >/tmp/egor-pactl-test.$$ 2>&1; then
+  sed -n '1,28p' /tmp/egor-pactl-test.$$
+  rm -f /tmp/egor-pactl-test.$$
+  echo PACTL_COOKIE_CANDIDATE_OK=yes
+else
+  cat /tmp/egor-pactl-test.$$ || true
+  rm -f /tmp/egor-pactl-test.$$
+  echo PACTL_COOKIE_CANDIDATE_OK=no
+  exit 1
+fi
 
-echo '===== SAFE COOKIE FILE CANDIDATES ====='
-# Do not reveal filenames/paths: show only existence, size and hash prefixes.
-i=0
-while IFS= read -r f; do
-  i=$((i+1))
-  printf 'candidate%d size=' "$i"; stat -c %s "$f" 2>/dev/null || echo '?'
-  printf 'candidate%d hash=' "$i"; sha256sum "$f" 2>/dev/null | cut -c1-16 || true
-done < <(find /run/egor-desktop /home/egor/.config/pulse /home/egor/.pulse /tmp -maxdepth 5 -type f \( -name cookie -o -name '*cookie*' \) -user egor 2>/dev/null | head -30)
-echo "COOKIE_CANDIDATE_COUNT=$i"
-
-echo '===== XPRA COMMAND / CONFIG PULSE REFERENCES ====='
-tr '\0' ' ' < "/proc/$xpra_pid/cmdline" 2>/dev/null | sed -E 's/(cookie[= ]+)[^ ]+/\1<redacted>/Ig' || true; echo
-systemctl cat egor-desktop.service 2>/dev/null | grep -Ei 'xpra|pulse|sound' | sed -E 's/(cookie[= ]+)[^ ]+/\1<redacted>/Ig' || true
-
-echo XPRA_COOKIE_SOURCE_INSPECT_DONE=yes
+echo COOKIE_CANDIDATE_TEST_DONE=yes
