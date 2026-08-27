@@ -1,38 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo '===== SERVICES ====='
-systemctl --no-pager --full status egor-desktop.service audio-remote.service 2>&1 | tail -n 160 || true
+echo '===== AUDIO REMOTE TREE ====='
+find /opt/audio-remote -maxdepth 3 -type f | sort | sed -n '1,220p'
 
-echo '===== SERVICE FILES ====='
-systemctl cat egor-desktop.service audio-remote.service 2>&1 || true
+echo '===== ENV KEYS ONLY ====='
+if [ -r /etc/audio-remote.env ]; then sed -E 's/^([^#=]+)=.*/\1=<redacted>/' /etc/audio-remote.env; fi
 
-echo '===== AUDIO PROCESSES ====='
-ps -eo pid,ppid,stat,ni,pri,pcpu,pmem,etimes,comm,args | grep -Ei '[p]ulse|[x]pra|[a]udio-remote|[f]fmpeg|[g]streamer|[s]peech-dispatch|[s]d_rhvoice' || true
+echo '===== SOURCE RELEVANT LINES ====='
+grep -RnsEi --exclude-dir=.venv --exclude='*.pyc' 'pulse|sound|audio|frame|sample|rate|buffer|latenc|queue|opus|webrtc|MediaStreamTrack|recv|sleep|packet|ptime|jitter|48000|24000|960|480|120' /opt/audio-remote 2>/dev/null | head -n 500 || true
 
-echo '===== PULSE INFO ====='
-PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native' PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE' runuser -u egor -- env PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native' PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE' pactl info 2>&1 || true
+echo '===== SERVER SOURCE ====='
+for f in /opt/audio-remote/audio_remote/*.py; do echo "--- $f ---"; sed -n '1,280p' "$f"; done
 
-echo '===== PULSE SINKS ====='
-runuser -u egor -- env PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native' PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE' pactl list sinks 2>&1 || true
+echo '===== PULSE XPRA CONFIG ====='
+sed -n '1,260p' /etc/xpra/pulse/xpra.pa 2>/dev/null || true
 
-echo '===== PULSE SINK INPUTS ====='
-runuser -u egor -- env PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native' PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE' pactl list sink-inputs 2>&1 || true
+echo '===== PULSE DAEMON CONF ====='
+grep -nEv '^\s*(#|;|$)' /etc/pulse/daemon.conf 2>/dev/null || true
 
-echo '===== AUDIO REMOTE JOURNAL ====='
-journalctl -u audio-remote.service --since '-15 min' --no-pager -n 300 2>&1 || true
-
-echo '===== EGOR DESKTOP JOURNAL AUDIO ====='
-journalctl -u egor-desktop.service --since '-15 min' --no-pager -n 300 2>&1 | grep -Ei 'pulse|audio|sound|xpra|underrun|overrun|drop|buffer|latenc|error|warn' || true
-
-echo '===== SOCKETS ====='
-ss -tunap 2>/dev/null | grep -Ei 'xpra|audio|ffmpeg|pulse|:100|:145|:800|:900' || true
-
-echo '===== LOAD ====='
-uptime
-vmstat 1 3
-
-echo '===== KERNEL NET ====='
-ip -s link 2>/dev/null || true
+echo '===== AUDIO REMOTE PACKAGE VERSIONS ====='
+/opt/audio-remote/.venv/bin/python - <<'PY'
+import importlib.metadata as m
+for n in ['aiortc','av','aioice','numpy','sounddevice','pulsectl']:
+    try: print(n, m.version(n))
+    except: pass
+PY
 
 echo DONE
