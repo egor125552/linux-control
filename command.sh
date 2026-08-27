@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo '===== ORCA PROCESS CGROUPS ====='
-for p in 92481 92483 92486; do
-  if [ -r "/proc/$p/cgroup" ]; then
-    echo "PID=$p"
-    cat "/proc/$p/cgroup"
-  fi
+echo '===== CURRENT ORCA ENV RELEVANT ====='
+live=$(pgrep -u egor -x orca | while read -r p; do st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null || true); [ "$st" != Z ] && echo "$p"; done | tail -1)
+echo "LIVE=$live"
+tr '\0' '\n' < "/proc/$live/environ" | grep -E '^(DISPLAY|DBUS_SESSION_BUS_ADDRESS|XAUTHORITY|XDG_RUNTIME_DIR|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|DESKTOP_SESSION|AT_SPI_BUS_ADDRESS|PULSE_SERVER|PULSE_COOKIE|RUNNER_TRACKING_ID|HOME|USER|LOGNAME|PATH)=' || true
+
+echo '===== EGOR MATE SESSION ====='
+sed -n '1,120p' /usr/local/bin/egor-mate-session
+
+echo '===== PARENT ENV RELEVANT ====='
+for p in 92483 92481; do
+  [ -r "/proc/$p/environ" ] || continue
+  echo "PID=$p"
+  tr '\0' '\n' < "/proc/$p/environ" | grep -E '^(DISPLAY|DBUS_SESSION_BUS_ADDRESS|XAUTHORITY|XDG_RUNTIME_DIR|AT_SPI_BUS_ADDRESS|PULSE_SERVER|PULSE_COOKIE|RUNNER_TRACKING_ID|HOME|USER|LOGNAME|PATH)=' || true
 done
-
-echo '===== SYSTEMD MATCHES ====='
-systemctl --no-pager --all --type=service | grep -Ei 'orca|egor|xpra' || true
-
-echo '===== USER UNITS ====='
-runuser -u egor -- systemctl --user --no-pager --all --type=service 2>&1 | grep -Ei 'orca|speech|xpra' || true
-
-echo '===== START COMMAND REFERENCES ====='
-grep -Rns --exclude='*.log' --exclude-dir='.cache' 'orca-egor-launcher' /etc/systemd /home/egor/.config/systemd /usr/local/bin /etc/xdg/autostart /home/egor/.config/autostart 2>/dev/null || true
