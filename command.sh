@@ -2,27 +2,28 @@
 set -euo pipefail
 export PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native'
 export PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE'
-pe() { runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" "$@"; }
 
-echo '===== SINK INPUTS FULL ====='
-pe pactl list sink-inputs
+echo '===== PACMD SINK INPUT DETAIL ====='
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pacmd list-sink-inputs 2>&1 || true
 
-echo '===== SOURCE OUTPUTS FULL ====='
-pe pactl list source-outputs
+echo '===== PACMD SINK DETAIL ====='
+runuser -u egor -- env LC_ALL=C LANG=C PULSE_SERVER="$PULSE_SERVER" PULSE_COOKIE="$PULSE_COOKIE" pacmd list-sinks 2>&1 | sed -n '/name: <Xpra-Speaker>/,/index:/p' || true
 
-echo '===== CLIENTS FULL ====='
-pe pactl list clients
+echo '===== RHVOICE PACKAGE / LIBRARIES ====='
+bin=/usr/lib/speech-dispatcher-modules/sd_rhvoice
+dpkg -S "$bin" 2>/dev/null || true
+pkg=$(dpkg -S "$bin" 2>/dev/null | head -1 | cut -d: -f1 || true)
+[ -n "$pkg" ] && dpkg -L "$pkg" | head -n 260 || true
+ldd "$bin" 2>/dev/null | grep -Ei 'pulse|audio|speech|rhvoice|snd|asound' || true
 
-echo '===== SINK LATENCY SNAPSHOTS ====='
-for i in $(seq 1 20); do
-  printf '%s ' "$(date +%H:%M:%S.%3N)"
-  pe pactl --format=json list sinks | python3 -c 'import json,sys; x=json.load(sys.stdin); s=next(v for v in x if v.get("name")=="Xpra-Speaker"); print("actual_us=%s configured_us=%s state=%s" % (s.get("latency",{}).get("actual"),s.get("latency",{}).get("configured"),s.get("state")))'
-  sleep .25
-done
+echo '===== RHVOICE BINARY PULSE STRINGS ====='
+strings "$bin" 2>/dev/null | grep -Ei 'pulse|latenc|buffer|pa_simple|pa_stream|audio|fragment|tlength|minreq|prebuf' | head -n 260 || true
 
-echo '===== PROCESS PRIORITIES ====='
-for p in $(pgrep -u egor -f 'pulseaudio|sd_rhvoice|speech-dispatcher|parec|audio_remote' || true); do
-  ps -o pid=,ppid=,cls=,rtprio=,pri=,ni=,psr=,%cpu=,%mem=,stat=,comm=,args= -p "$p"
-done
+echo '===== SPEECH DISPATCHER AUDIO LIBS ====='
+ldd /usr/bin/speech-dispatcher 2>/dev/null | grep -Ei 'pulse|audio|snd|asound' || true
+find /usr/lib -type f \( -name '*speechd*' -o -name '*spd_audio*' \) 2>/dev/null | head -n 180
+
+echo '===== CONFIG AUDIO SETTINGS ====='
+grep -RnsEi --binary-files=without-match 'AudioOutputMethod|Pulse|latency|buffer|fragment|period|playback' /etc/speech-dispatcher /home/egor/.config/speech-dispatcher 2>/dev/null | head -n 320 || true
 
 echo DONE
