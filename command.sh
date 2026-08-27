@@ -1,17 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo '===== ORCA TREE ====='
-ps -p 92481,92483,92486 -o pid=,ppid=,stat=,etimes=,comm=,args= || true
+server='unix:/run/egor-desktop/xpra/100/pulse/native'
+cookie='/home/egor/.config/pulse/$PULSE_COOKIE'
 
-echo '===== PARENT CHAIN ====='
-p=92486
-for i in 1 2 3 4 5; do
-  [ -r "/proc/$p/stat" ] || break
-  ps -p "$p" -o pid=,ppid=,stat=,etimes=,comm=,args= || true
-  p=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null || echo 1)
-  [ "$p" = 0 ] && break
-done
+[ -S /run/egor-desktop/xpra/100/pulse/native ] || { echo PULSE_SOCKET_MISSING; exit 1; }
+[ -r "$cookie" ] || { echo PULSE_COOKIE_MISSING; exit 1; }
 
-echo '===== LAUNCHER ====='
-sed -n '1,220p' /usr/local/bin/orca-egor-launcher
+echo '===== STOP STALE SPEECH DISPATCHER ====='
+pkill -u egor -f '(^|/)speech-dispatcher([[:space:]]|$)' 2>/dev/null || true
+sleep 0.5
+rm -f /home/egor/.cache/speech-dispatcher/pid/speech-dispatcher.pid
+
+echo '===== START SPEECH DISPATCHER WITH XPRA AUDIO ====='
+runuser -u egor -- env \
+  HOME=/home/egor \
+  PULSE_SERVER="$server" \
+  PULSE_COOKIE="$cookie" \
+  speech-dispatcher -d
+sleep 1
+
+ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep '[s]peech-dispatcher' || true
+
+echo '===== RHVOICE LOG ====='
+tail -n 20 /home/egor/.cache/speech-dispatcher/log/rhvoice.log 2>/dev/null || true
+
+echo '===== SPEECHD LOG ====='
+tail -n 20 /home/egor/.cache/speech-dispatcher/log/speech-dispatcher.log 2>/dev/null || true
+
+echo '===== SPEAK TEST ====='
+if command -v spd-say >/dev/null 2>&1; then
+  runuser -u egor -- env \
+    HOME=/home/egor \
+    PULSE_SERVER="$server" \
+    PULSE_COOKIE="$cookie" \
+    spd-say -w 'Звук восстановлен' || true
+else
+  echo SPD_SAY_MISSING
+fi
+
+echo DONE
