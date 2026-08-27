@@ -1,30 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-old=$(systemctl show audio-remote.service -p MainPID --value)
-echo "OLD_AUDIO_REMOTE_PID=$old"
+echo '===== WAIT FOR LIVE WEBRTC CAPTURE ====='
+found=no
+for i in $(seq 1 20); do
+  if pgrep -u egor -x parec >/dev/null 2>&1; then
+    found=yes
+    break
+  fi
+  sleep 0.5
+done
 
-echo '===== RESTART AUDIO REMOTE ONLY ====='
-systemctl restart audio-remote.service
-sleep 2
-systemctl is-active audio-remote.service
-new=$(systemctl show audio-remote.service -p MainPID --value)
-echo "NEW_AUDIO_REMOTE_PID=$new"
-[ -n "$new" ] && [ "$new" != 0 ] && [ "$new" != "$old" ]
+echo "PAREC_ACTIVE=$found"
+ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep -E '[p]arec|[a]udio_remote|[p]ython' | tail -n 40 || true
 
-echo '===== VERIFY PATCH LOADED ON DISK ====='
-grep -nE 'prebuffer_ms|next_send_time|silence_frames|dropped_frames|capture_latency_ms' /opt/audio-remote/audio_remote/audio.py
-/opt/audio-remote/.venv/bin/python -m py_compile /opt/audio-remote/audio_remote/audio.py
+echo '===== WEBRTC JOURNAL AFTER RESTART ====='
+journalctl -u audio-remote.service --since '2026-08-27 15:29:09' --no-pager -n 200 2>&1 || true
 
-echo '===== SERVICE LOG AFTER RESTART ====='
-journalctl -u audio-remote.service --since '-3 min' --no-pager -n 160 2>&1 || true
+if [ "$found" = yes ]; then
+  echo '===== SEND LONG SPEECH TEST ====='
+  runuser -u egor -- env \
+    HOME=/home/egor \
+    XDG_RUNTIME_DIR=/run/egor-desktop \
+    PULSE_SERVER='unix:/run/egor-desktop/xpra/100/pulse/native' \
+    PULSE_COOKIE='/home/egor/.config/pulse/$PULSE_COOKIE' \
+    spd-say -w 'Проверка нового звука. Раз, два, три, четыре, пять. Сейчас речь должна идти ровно, без резких обрывов и без вываливания слов кусками.'
+  echo LONG_AUDIO_TEST_SENT=yes
+else
+  echo LONG_AUDIO_TEST_SENT=no
+fi
 
-echo '===== ACCESSIBILITY STACK UNTOUCHED ====='
-ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep -E '[o]rca|[s]peech-dispatcher|[s]d_rhvoice' || true
-orca=$(pgrep -u egor -x orca | while read -r p; do st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null || true); [ "$st" != Z ] && echo "$p"; done | tail -1)
-spd=$(pgrep -u egor -f '(^|/)speech-dispatcher([[:space:]]|$)' | head -1 || true)
-rhv=$(pgrep -u egor -x sd_rhvoice | head -1 || true)
-[ -n "$orca" ] && [ -n "$spd" ] && [ -n "$rhv" ]
-echo "ORCA=$orca SPEECH=$spd RHVOICE=$rhv"
-
-echo AUDIO_REMOTE_PACING_LIVE=yes
+echo DONE
