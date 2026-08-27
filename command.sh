@@ -12,80 +12,43 @@ XDG=$(tr '\0' '\n' </proc/$MATE_PID/environ | sed -n 's/^XDG_RUNTIME_DIR=//p' | 
 runegor() {
   runuser -u egor -- env HOME=/home/egor USER=egor LOGNAME=egor DISPLAY="$DISPLAY_VALUE" XAUTHORITY="$XAUTH" XDG_RUNTIME_DIR="$XDG" DBUS_SESSION_BUS_ADDRESS="$DBUS" "$@"
 }
-echo '===== ACTIVE WINDOW ====='
-if command -v xdotool >/dev/null 2>&1; then
-  WID=$(runegor xdotool getactivewindow 2>/dev/null || true)
-  echo "WINDOW_ID=${WID:-unknown}"
-  if [ -n "${WID:-}" ]; then
-    echo -n 'WINDOW_NAME='; runegor xdotool getwindowname "$WID" 2>/dev/null || true
-    echo -n 'WINDOW_CLASS='; runegor xdotool getwindowclassname "$WID" 2>/dev/null || true
-    echo -n 'WINDOW_PID='; runegor xdotool getwindowpid "$WID" 2>/dev/null || true
-  fi
-else
-  echo 'xdotool=missing'
-fi
 
-echo '===== WMCTRL ACTIVE ====='
-if command -v wmctrl >/dev/null 2>&1; then
-  runegor wmctrl -lx 2>/dev/null | head -n 80 || true
-else
-  echo 'wmctrl=missing'
-fi
+echo '===== CORE PROCESSES ====='
+ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep -E '[m]arco|[m]ate-panel|[c]aja|[o]rca|[x]pra' || true
 
-echo '===== AT-SPI FOCUS ====='
-runegor python3 - <<'PY' || true
-import sys
-try:
-    import pyatspi
-except Exception as e:
-    print('PYATSPI_ERROR=', repr(e))
-    sys.exit(0)
+echo '===== ROOT WINDOW FOCUS PROPERTIES ====='
+runegor xprop -root _NET_ACTIVE_WINDOW _NET_CLIENT_LIST _NET_CLIENT_LIST_STACKING 2>&1 || true
 
-def focused_desc(acc, depth=0):
-    try:
-        st = acc.getState()
-        focused = st.contains(pyatspi.STATE_FOCUSED)
-    except Exception:
-        focused = False
-    if focused:
-        try: role=acc.getRoleName()
-        except Exception: role='?'
-        try: name=acc.name
-        except Exception: name='?'
-        try: app=acc.getApplication().name if acc.getApplication() else '?'
-        except Exception: app='?'
-        print(f'FOCUSED_APP={app}')
-        print(f'FOCUSED_ROLE={role}')
-        print(f'FOCUSED_NAME={name}')
-        return True
-    try:
-        n=acc.childCount
-    except Exception:
-        n=0
-    for i in range(n):
-        try:
-            ch=acc.getChildAtIndex(i)
-        except Exception:
-            continue
-        if focused_desc(ch, depth+1):
-            return True
-    return False
+echo '===== X INPUT FOCUS ====='
+runegor xdotool getwindowfocus 2>&1 || true
+runegor xdotool getactivewindow 2>&1 || true
 
-d=pyatspi.Registry.getDesktop(0)
-found=False
-for i in range(d.childCount):
-    try: app=d.getChildAtIndex(i)
-    except Exception: continue
-    if focused_desc(app):
-        found=True
-        break
-print('FOCUS_FOUND=' + ('yes' if found else 'no'))
-PY
+echo '===== CLIENT WINDOWS ====='
+IDS=$(runegor xprop -root _NET_CLIENT_LIST_STACKING 2>/dev/null | sed 's/^[^#]*# //' | tr ',' ' ' || true)
+for id in $IDS; do
+  [ -n "$id" ] || continue
+  echo "--- $id ---"
+  runegor xprop -id "$id" _NET_WM_NAME WM_NAME WM_CLASS _NET_WM_PID _NET_WM_WINDOW_TYPE _NET_WM_STATE _NET_WM_DESKTOP 2>/dev/null || true
+done
 
-echo '===== ORCA RECENT FOCUS EVENTS ====='
+echo '===== VISIBLE WINDOWS XDOTOOL ====='
+runegor xdotool search --onlyvisible --name '.*' 2>/dev/null | while read -r id; do
+  printf '%s ' "$id"
+  runegor xdotool getwindowname "$id" 2>/dev/null || true
+done | tail -n 80 || true
+
+echo '===== XWININFO TOP TREE ====='
+runegor xwininfo -root -tree 2>/dev/null | head -n 160 || true
+
+echo '===== MARCO SETTINGS ====='
+runegor gsettings get org.mate.Marco.general focus-mode 2>/dev/null || true
+runegor gsettings get org.mate.Marco.general auto-raise 2>/dev/null || true
+
+echo '===== XINPUT ====='
+runegor xinput --list --short 2>/dev/null | head -n 80 || true
+
+echo '===== ORCA LAST KEY/FOCUS EVENTS ====='
 LOG=/home/egor/.local/state/orca/orca-debug.log
 if [ -f "$LOG" ]; then
-  grep -Ei 'focus|active window|window:activate|object:state-changed:focused' "$LOG" | tail -n 40 || true
-else
-  echo 'orca log missing'
+  grep -Ei 'KEYBOARD|key event|focus manager|locus of focus|active window|window:activate|state-changed:focused' "$LOG" | tail -n 140 || true
 fi
