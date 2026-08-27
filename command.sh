@@ -8,77 +8,39 @@ DISPLAY_VAL=$(getv DISPLAY); [ -n "$DISPLAY_VAL" ] || DISPLAY_VAL=:100
 XDG_VAL=$(getv XDG_RUNTIME_DIR); [ -n "$XDG_VAL" ] || XDG_VAL=/run/egor-desktop
 RUNENV=(env HOME=/home/egor DISPLAY="$DISPLAY_VAL" XDG_RUNTIME_DIR="$XDG_VAL" DBUS_SESSION_BUS_ADDRESS="$DBUS_VAL")
 
-entry=/opt/orca-51/bin/orca
-stamp=$(date +%Y%m%d-%H%M%S)
-backup=/root/orca51-entry-before-zombie-fix-$stamp
-cp -a "$entry" "$backup"
+echo '===== AUDIO SERVICES ====='
+systemctl is-active audio-remote.service 2>/dev/null || true
+systemctl status audio-remote.service --no-pager -n 60 2>&1 | grep -Ev '(password|token|secret|authorization|private)' || true
 
-python3 - <<'PY'
-p='/opt/orca-51/bin/orca'
-s=open(p,encoding='utf-8').read()
-old='''    orcas = [int(p) for p in pids.split()]\n    pid = os.getpid()\n    return [p for p in orcas if p != pid]\n'''
-new='''    orcas = [int(p) for p in pids.split()]\n    pid = os.getpid()\n\n    def is_zombie(other_pid: int) -> bool:\n        try:\n            with open(f"/proc/{other_pid}/stat", "r", encoding="utf-8") as stat_file:\n                stat = stat_file.read()\n            # /proc/<pid>/stat: state is the first field after the final ") ".\n            return stat.rsplit(") ", 1)[1].split()[0] == "Z"\n        except (OSError, IndexError):\n            return False\n\n    return [p for p in orcas if p != pid and not is_zombie(p)]\n'''
-if old not in s:
-    raise SystemExit('TARGET_BLOCK_NOT_FOUND')
-s=s.replace(old,new,1)
-open(p,'w',encoding='utf-8').write(s)
-PY
-chmod 0755 "$entry"
-python3 -m py_compile "$entry"
+echo '===== USER AUDIO PROCESSES ====='
+ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep -Ei 'pulse|pipewire|wireplumber|speech-dispatch|sd_rhvoice|rhvoice' || true
 
-echo '===== PATCHED OTHER_ORCAS ====='
-sed -n '208,245p' "$entry"
+echo '===== SESSION AUDIO ENV ====='
+tr '\0' '\n' < "/proc/$pid/environ" | grep -E '^(PULSE_SERVER|PULSE_RUNTIME_PATH|PIPEWIRE_REMOTE|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS|DISPLAY)=' | sed -E 's#(DBUS_SESSION_BUS_ADDRESS=).*#\1present#' || true
 
-# Stop only non-zombie Orca processes which are currently stuck in --replace cleanup.
-for p in $(pgrep -u egor -x orca || true); do
-  st=$(ps -o stat= -p "$p" 2>/dev/null | xargs || true)
-  case "$st" in Z*) ;; *) kill "$p" 2>/dev/null || true;; esac
-done
-sleep 0.8
+echo '===== PACTL IN LIVE SESSION ====='
+sudo -u egor "${RUNENV[@]}" pactl info 2>&1 || true
+sudo -u egor "${RUNENV[@]}" pactl list short sinks 2>&1 || true
+sudo -u egor "${RUNENV[@]}" pactl list short sources 2>&1 || true
 
-debugfile=/home/egor/.local/state/orca/virtual-cursor-final.log
-rm -f "$debugfile"
-sudo -u egor "${RUNENV[@]}" bash -c '
-  export RUNNER_TRACKING_ID=
-  export PATH="/opt/orca-51/bin:$PATH"
-  export LD_LIBRARY_PATH="/opt/orca-51/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  export GI_TYPELIB_PATH="/opt/orca-51/lib/x86_64-linux-gnu/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
-  export PYTHONPATH="/opt/orca-51/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
-  export GSETTINGS_SCHEMA_DIR=/opt/orca-51/share/glib-2.0/schemas
-  setsid -f /opt/orca-51/bin/orca --debug --debug-file /home/egor/.local/state/orca/virtual-cursor-final.log >/home/egor/.local/state/orca/virtual-cursor-final-stderr.log 2>&1
-'
+echo '===== PIPEWIRE/WPCTL ====='
+sudo -u egor "${RUNENV[@]}" wpctl status 2>&1 | head -160 || true
 
-live=''
-for i in $(seq 1 80); do
-  for p in $(pgrep -u egor -x orca || true); do
-    st=$(ps -o stat= -p "$p" 2>/dev/null | xargs || true)
-    case "$st" in Z*) ;; *) live="$p"; break;; esac
-  done
-  [ -n "$live" ] && break
-  sleep 0.25
-done
-[ -n "$live" ] || { echo LIVE_ORCA=no; cat /home/egor/.local/state/orca/virtual-cursor-final-stderr.log 2>/dev/null || true; exit 1; }
-sleep 2
+echo '===== RUNTIME AUDIO PATHS ====='
+find /run/egor-desktop -maxdepth 3 \( -type s -o -type d \) -printf '%y %m %u:%g %p\n' 2>/dev/null | grep -Ei 'pulse|pipewire|speech|audio' | head -160 || true
 
-echo "LIVE_ORCA_PID=$live"
-echo '===== PROCESS STATES ====='
-ps -u egor -o pid=,ppid=,stat=,etimes=,comm=,args= | grep '[o]rca' || true
-
-echo '===== EXTENSION STARTUP ====='
-grep -Ei 'EXTENSION LOADER|EGOR ACCESSIBILITY|Failed to load|Failed to instantiate|Traceback|Exception|ERROR|CRITICAL' "$debugfile" | tail -n 240 || true
-
-echo '===== STDERR ====='
-cat /home/egor/.local/state/orca/virtual-cursor-final-stderr.log 2>/dev/null || true
-
-if grep -q 'EGOR ACCESSIBILITY: VoiceOver-like virtual cursor active' "$debugfile"; then
-  echo VOICEOVER_CURSOR_EXTENSION_LOADED=yes
-else
-  echo VOICEOVER_CURSOR_EXTENSION_LOADED=no
-  cp -a "$backup" "$entry"
-  chmod 0755 "$entry"
-  echo ENTRYPOINT_RESTORED_AFTER_FAILURE=yes
-  exit 1
+echo '===== SPEECH DISPATCHER SAFE SETTINGS ====='
+if [ -f /home/egor/.config/speech-dispatcher/speechd.conf ]; then
+  grep -Ei '^[[:space:]]*(AudioOutputMethod|AudioPulseServer|DefaultModule|DefaultVoiceType|DefaultLanguage|LogLevel|LogDir|CommunicationMethod|SocketPath)[[:space:]]' /home/egor/.config/speech-dispatcher/speechd.conf 2>/dev/null || true
 fi
 
-echo "ENTRYPOINT_BACKUP=$backup"
-echo ORCA_ZOMBIE_FIX_AND_VIRTUAL_CURSOR_READY=yes
+echo '===== RHVOICE LOG ====='
+tail -n 120 /run/egor-desktop/speech-dispatcher/log/rhvoice.log 2>/dev/null || true
+
+echo '===== AUDIO REMOTE JOURNAL ERRORS ====='
+journalctl -u audio-remote.service -b --no-pager 2>/dev/null | grep -Ei 'error|fail|pulse|pipewire|audio|socket|listen|connect' | tail -140 || true
+
+echo '===== ORCA SPEECH ERRORS ====='
+grep -Ei 'speech dispatcher|playback stream|audio not initialized|speech server|ERROR' /home/egor/.local/state/orca/virtual-cursor-final.log 2>/dev/null | tail -100 || true
+
+echo AUDIO_CHAIN_INSPECT_DONE=yes
