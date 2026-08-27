@@ -15,38 +15,39 @@ work=/tmp/egor-audio-continuity
 rm -rf "$work" && mkdir -p "$work"
 python3 - <<'PY'
 import math, wave, struct
-rate=48000
-dur=10.0
-amp=12000
+rate=48000; dur=10.0; amp=12000
 with wave.open('/tmp/egor-audio-continuity/tone.wav','wb') as w:
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate)
+    frames=bytearray()
     for i in range(int(rate*dur)):
         s=int(amp*math.sin(2*math.pi*523.25*i/rate))
-        w.writeframesraw(struct.pack('<hh',s,s))
+        frames += struct.pack('<hh',s,s)
+    w.writeframes(frames)
 PY
 
-sudo -u egor "${PENV[@]}" timeout 12 parec --device=Xpra-Speaker.monitor --file-format=wav "$work/capture.wav" >/dev/null 2>&1 &
+sudo -u egor "${PENV[@]}" bash -c 'timeout 12 parec --device=Xpra-Speaker.monitor --file-format=wav > /tmp/egor-audio-continuity/capture.wav' &
 rec=$!
 sleep 0.6
 sudo -u egor "${PENV[@]}" paplay --device=Xpra-Speaker "$work/tone.wav"
 wait "$rec" || true
 
-python3 - <<'PY'
+if [ ! -s "$work/capture.wav" ]; then
+  echo CAPTURE_CREATED=no
+else
+  echo CAPTURE_CREATED=yes
+  python3 - <<'PY'
 import wave, struct
 p='/tmp/egor-audio-continuity/capture.wav'
 with wave.open(p,'rb') as w:
     rate=w.getframerate(); ch=w.getnchannels(); n=w.getnframes(); raw=w.readframes(n)
 vals=struct.unpack('<'+'h'*(len(raw)//2),raw)
-mono=[]
-for i in range(0,len(vals),ch):
-    mono.append(max(abs(x) for x in vals[i:i+ch]))
+mono=[max(abs(x) for x in vals[i:i+ch]) for i in range(0,len(vals),ch)]
 threshold=250
 silent=[v<threshold for v in mono]
-# Find silence runs >= 80 ms, excluding leading/trailing silence around the 10s playback.
 runs=[]; start=None
 for i,s in enumerate(silent):
     if s and start is None: start=i
-    if not s and start is not None:
+    elif not s and start is not None:
         if i-start >= int(rate*0.08): runs.append((start/rate,(i-start)/rate))
         start=None
 if start is not None and len(silent)-start >= int(rate*0.08): runs.append((start/rate,(len(silent)-start)/rate))
@@ -57,6 +58,7 @@ print(f'SILENCE_RUNS_TOTAL={len(runs)}')
 print(f'MIDSTREAM_SILENCE_RUNS={len(mid)}')
 for st,d in mid[:20]: print(f'MID_SILENCE start={st:.3f} duration={d:.3f}')
 PY
+fi
 
 echo '===== RHVOICE CURRENT HEALTH ====='
 tail -n 180 /run/egor-desktop/speech-dispatcher/log/rhvoice.log 2>/dev/null | grep -Ei 'audio|playback|error|started|initialized' | tail -100 || true
@@ -64,7 +66,7 @@ tail -n 180 /run/egor-desktop/speech-dispatcher/log/rhvoice.log 2>/dev/null | gr
 echo '===== AUDIO REMOTE IMPLEMENTATION HINTS ====='
 grep -RInE --exclude='*.env' --exclude='*.pem' --exclude='*.key' --exclude='*.json' \
   'AudioStreamTrack|MediaStreamTrack|AudioFrame|pulse|parec|sample_rate|samples|pts|time_base|queue|jitter|sleep\(' \
-  /opt/audio-remote/audio_remote 2>/dev/null | head -260 || true
+  /opt/audio-remote/audio_remote 2>/dev/null | head -320 || true
 
 echo '===== AUDIO REMOTE RECENT LIVE ERRORS ====='
 journalctl -u audio-remote.service --since '45 minutes ago' --no-pager 2>/dev/null \
