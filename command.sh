@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
+# bridge-v2 recheck
 echo '===== NOW ====='
 date -Is
 uptime
