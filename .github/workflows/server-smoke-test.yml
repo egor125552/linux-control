@@ -10,10 +10,24 @@ on:
 jobs:
   execute:
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - name: Checkout command
-        uses: actions/checkout@v4
+      - name: Fetch command without checkout
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 2 --retry-delay 1 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/command.sh?ref=${GITHUB_SHA}" \
+            -o /tmp/linux-control-command.sh
+          chmod 700 /tmp/linux-control-command.sh
 
       - name: Execute command on server
         shell: bash
@@ -23,6 +37,6 @@ jobs:
           whoami
           hostname
           echo '===== COMMAND ====='
-          cat command.sh
+          cat /tmp/linux-control-command.sh
           echo '===== OUTPUT ====='
-          sudo -n bash ./command.sh
+          sudo -n bash /tmp/linux-control-command.sh
