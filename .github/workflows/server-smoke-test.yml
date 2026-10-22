@@ -10,7 +10,7 @@ on:
 jobs:
   execute:
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
