@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-echo "=== PATCH REMOTE DESKTOP COMMANDER TO OFFICIAL STABLE 0.3.0 ==="
-script="$(mktemp /tmp/rdc-v030.XXXXXXXX.sh)"
-trap 'rm -f "$script"' EXIT
-curl -fLsS --connect-timeout 10 --max-time 45 \
-  "https://raw.githubusercontent.com/egor125552/linux-control/c94b00e0460c9704bd1026ac071b85f439d34779/desktop-commander-v030-update.sh" -o "$script"
-bash "$script"
+echo '=== VPS BROWSER REGRESSION: MICROPHONE AND VOICE DRAFT FOCUS ==='
+ROOT=/var/tmp/bulbam-accesspilot-server
+WORK="$(find "$ROOT" -maxdepth 1 -mindepth 1 -type d -name 'source.*' -print | sort | head -n 1)"
+if [[ -z "$WORK" || ! -d "$WORK/.git" ]];then
+  echo 'No dedicated AccessPilot source checkout';exit 3
+fi
+cd "$WORK"
+git fetch -q --depth 1 origin feature/accesspilot-virtual-accessibility
+git -c advice.detachedHead=false checkout --force --detach FETCH_HEAD
+echo "SOURCE_SHA=$(git rev-parse --short HEAD)"
+echo "RDC_VERSION=$(node -p "require('/usr/local/lib/node_modules/@wonderwhy-er/desktop-commander/package.json').version")"
+echo "RDC_SERVICE=$(systemctl is-active desktop-commander-remote.service || true)"
+ACCESSPILOT_BROWSER_TESTS=1 npx vitest run test/accesspilot-bulbam-wcag.test.js test/accesspilot-voice-draft-focus.test.js --maxWorkers=1 --reporter=verbose
+echo '=== VPS BROWSER REGRESSIONS COMPLETE ==='
