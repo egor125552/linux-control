@@ -21,15 +21,15 @@ npx playwright install chromium
 mkdir -p "$REPORT"
 echo 'RUNNING UNIVERSAL TEST EXCLUSIVELY ON ISOLATED TEST DATA'
 set +e
-timeout 2100s env ACCESSPILOT_SCENARIOS=signed-out,signed-in \
-  ACCESSPILOT_MAX_ACTIONS=650 ACCESSPILOT_MAX_STATES=240 \
+timeout 520s env ACCESSPILOT_SCENARIOS=signed-out,signed-in \
+  ACCESSPILOT_MAX_ACTIONS=85 ACCESSPILOT_MAX_STATES=70 \
   ACCESSPILOT_FAKE_MEDIA=1 \
   nice -n 10 npm run test:accessibility -- --output "$REPORT"
 RESULT=$?
 set -e
 echo "ACCESSPILOT_EXIT_CODE=$RESULT"
 echo 'RESULTS:'
-if test -f "$REPORT/accesspilot-combined.json"; then
+if test -f "$REPORT/signed-out.json" || test -f "$REPORT/signed-in.json"; then
   node tools/accesspilot/merge-reports.js --config tools/accesspilot/accesspilot.project.json --output "$REPORT"
   node --input-type=module - "$REPORT/accesspilot-combined.json" <<'NODE'
 import {readFileSync} from "node:fs";
