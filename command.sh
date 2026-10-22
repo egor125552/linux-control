@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-echo "=== SERVER ACCESSPILOT: SECOND PASS ==="
+echo "=== SERVER ACCESSPILOT: SECOND PASS AFTER REGRESSION FIX ==="
 echo "HOST=$(hostname)"
 work="$(mktemp /tmp/vps-accesspilot.XXXXXXXX.sh)"
 trap 'rm -f "$work"' EXIT
