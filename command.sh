@@ -24,12 +24,16 @@ update(state="running",completed_parts=[],converted=0,errors=[])
 for part in (1,2,3):
     url=f"https://downloads.sonniss.com/Sonniss.com-GDC2026-GameAudioBundle{part}of5.zip"
     archive=base/f"part-{part}.zip"
-    update(current_part=part,state="downloading")
+    free=shutil.disk_usage(base).free
+    if free < 1800000000:
+        update(state="insufficient_space",current_part=part,free_bytes=free)
+        raise RuntimeError("Too little disk space to safely download next archive")
+    update(current_part=part,state="downloading",free_bytes=free)
     if not archive.exists():
         tmp=archive.with_suffix(".partial")
         for attempt in range(4):
             try:
-                subprocess.run(["curl","--fail","--location","--retry","3","--connect-timeout","30","--output",str(tmp),url],check=True)
+                subprocess.run(["curl","--fail","--location","--retry","3","--connect-timeout","30","--max-filesize","2100000000","--output",str(tmp),url],check=True)
                 if not zipfile.is_zipfile(tmp): raise RuntimeError("Invalid ZIP download")
                 tmp.rename(archive)
                 break
@@ -77,8 +81,8 @@ if ! command -v curl >/dev/null; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl
 fi
 echo "FREE_DISK_BYTES=$(df -B1 --output=avail "$BASE" | tail -1 | tr -d ' ')"
-if [ "$(df -B1 --output=avail "$BASE" | tail -1)" -lt 6000000000 ]; then
-  echo "INSUFFICIENT_SPACE: Need at least 6 GB free; not starting"
+if [ "$(df -B1 --output=avail "$BASE" | tail -1)" -lt 2500000000 ]; then
+  echo "INSUFFICIENT_SPACE: Need at least 2.5 GB free; not starting"
   exit 1
 fi
 if systemctl is-active --quiet zeroline-sonniss.service; then
