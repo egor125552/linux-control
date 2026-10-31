@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-BASE=/srv/zero-line-audio/sonniss-2026
-echo "SERVICE=$(systemctl is-active zeroline-sonniss.service || true)"
-cat "$BASE/status.json" 2>/dev/null || true
-echo "MP3_COUNT=$(find "$BASE/mp3" -type f -iname '*.mp3' 2>/dev/null | wc -l)"
-echo "PARTIALS:"
-ls -lh "$BASE"/part-*.partial "$BASE"/part-*.zip 2>/dev/null || true
-echo "RECENT:"
-journalctl -u zeroline-sonniss.service -n 8 --no-pager -o cat || true
+echo '=== REMOTE DESKTOP COMMANDER AUTH ==='
+echo "HOST=$(hostname)"
+echo '--- service before ---'
+systemctl status desktop-commander-remote.service --no-pager -l || true
+echo '--- cli help ---'
+npx -y @wonderwhy-er/desktop-commander@latest remote --help 2>&1 | head -n 120 || true
+echo '--- restart service ---'
+systemctl restart desktop-commander-remote.service
+sleep 6
+echo '--- recent journal ---'
+journalctl -u desktop-commander-remote.service --since '2 minutes ago' --no-pager -o cat | tail -n 220
