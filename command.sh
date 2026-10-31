@@ -1,45 +1,91 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-echo '=== REMOTE DESKTOP COMMANDER: NEW AUTHORIZATION ==='
-echo "HOST=$(hostname)"
-temp="$(mktemp -d)"
-trap 'rm -rf "$temp"' EXIT
-cat > "$temp/cert.pem" <<'CERTIFICATE'
------BEGIN CERTIFICATE-----
-MIIERTCCAq2gAwIBAgIUB9TasWlWOYdtm6EzYUx5o1pBxb8wDQYJKoZIhvcNAQEL
-BQAwMjEwMC4GA1UEAwwnRXBoZW1lcmFsIEdpdEh1YiBSdW5uZXIgQXV0aCBEaWFn
-bm9zdGljMB4XDTI2MTAyMjIxMTQwNFoXDTI2MTAyMzIxMTQwNFowMjEwMC4GA1UE
-AwwnRXBoZW1lcmFsIEdpdEh1YiBSdW5uZXIgQXV0aCBEaWFnbm9zdGljMIIBojAN
-BgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA1WHVREqPZtb40UxX35gLazSrUTQz
-I1qAGXG293/wMyKhWSVHoYCAasY+0YyEuHRfkFSuOfwBwIZYVtA1SuLCm00xtHue
-KgyzEbCNnKkcWdI7YvivK2w9yWH6tFuhcYOm1wbLNmqW7Vol2Gr6CKgwqg56zJ/j
-zrFMgR9JfGT+UyueC4x6AmMbwa62IklGJ1fESgnyoN/51J2ie/3OttwUEkuvTGmc
-q8ES586pTbdgfmrzZc560ArNMDnQT/iDYGkGAy8m8oaRpoQPPtGB4MbrjU+wVEZE
-TwWpS7NoZ7IzLyiWwoc7ZHqnKP7wKz0JA5//owWhPjr47LaQXlMLmTA6JsHM7H4D
-y0L/mOx4epI8TyqIOzjpphatI/LJkFFK+QfZE0b+d6ofP7G9YWVcuTHwJgdBf3sw
-rai6mVAauJcYQounUkQxyqbY+rT/z21sQf8ta4IxhwKmN0laztYnZ9yd8XeRFF0M
-hFwcLoUq/h7Xytn6awWkdzDOoXDq6PxVVu93AgMBAAGjUzBRMB0GA1UdDgQWBBT7
-ZeS6TEEwU0At+LQsuxTh2z6OYzAfBgNVHSMEGDAWgBT7ZeS6TEEwU0At+LQsuxTh
-2z6OYzAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQAX2GswAfYF
-hjwhAO/SY8JdE5kfULtbD8H3vQVlhv7Cdrq2vSzpo7VRqER456ytjwARews7oHqK
-O007iVWC6cYHiDelwJABtZDCOqc4PO+Ifv+R8fVmHQ+3/7daAhyVjeAEEzuMtB0h
-yr6Gk54c6BI1f7NfT4+9SgVhEwDD7HIbDoqcEj+huIy/1Lvm3navMjX4PxkAFhez
-hlCOJY7gWoxu8noPUWiY+RHdTWm/9zY1e6a2dzuFXVnL3d+CvsWmNMIG4EpVaL6f
-WIZkCW8tdDkDC68jkhvjFXmjIpt3rS3NSz0n7L+wXKDOFUJCbYcr3B3tuAaleKjm
-UQRMGIlGfVR3KhqI9UuIo/kPh2AriJ2/vdFB0TI6GhRmjgXqJueZGI1qF5T1xAPi
-f+/99LhHLTdEVvbGa2174EDulcpgnggWoH4fEyucomV4GnxBGwwRJ909+X1kfnid
-TF7wngvi1ARdHFYtUxhyjvHXkr0rIFnAGoVA2u7hapyvQtOPQSwCOC0=
------END CERTIFICATE-----
-CERTIFICATE
-systemctl restart desktop-commander-remote.service
-sleep 7
-echo "SERVICE_STATUS=$(systemctl is-active desktop-commander-remote.service || true)"
-journalctl -u desktop-commander-remote.service --since '2 minutes ago' --no-pager -o cat | tail -n 180 > "$temp/journal.txt"
-echo "JOURNAL_LINES=$(wc -l < "$temp/journal.txt")"
-openssl cms -encrypt -binary -aes256 -in "$temp/journal.txt" -out "$temp/journal.cms" -outform DER -recip "$temp/cert.pem"
-echo 'BEGIN_ENCRYPTED_JOURNAL'
-base64 -w 0 "$temp/journal.cms"
-echo
-echo 'END_ENCRYPTED_JOURNAL'
-echo '=== END AUTHORIZATION JOB ==='
+
+BASE=/srv/zero-line-audio/sonniss-2026
+mkdir -p "$BASE"
+cat > "$BASE/convert.py" <<'PY'
+import os, sys, pathlib, urllib.request, zipfile, subprocess, shutil, json, time
+base=pathlib.Path("/srv/zero-line-audio/sonniss-2026")
+out=base/"mp3"
+out.mkdir(parents=True,exist_ok=True)
+log=base/"status.json"
+def update(**kwargs):
+    state={}
+    if log.exists():
+        try: state=json.loads(log.read_text())
+        except Exception: pass
+    state.update(kwargs)
+    tmp=log.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state,ensure_ascii=False,indent=2))
+    tmp.replace(log)
+total=0
+update(state="running",completed_parts=[],converted=0,errors=[])
+for part in (1,2,3):
+    url=f"https://downloads.sonniss.com/Sonniss.com-GDC2026-GameAudioBundle{part}of5.zip"
+    archive=base/f"part-{part}.zip"
+    update(current_part=part,state="downloading")
+    if not archive.exists():
+        tmp=archive.with_suffix(".partial")
+        for attempt in range(4):
+            try:
+                subprocess.run(["curl","--fail","--location","--retry","3","--connect-timeout","30","--output",str(tmp),url],check=True)
+                if not zipfile.is_zipfile(tmp): raise RuntimeError("Invalid ZIP download")
+                tmp.rename(archive)
+                break
+            except Exception:
+                if attempt==3: raise
+                time.sleep(10*(attempt+1))
+    if not zipfile.is_zipfile(archive): raise RuntimeError("Invalid ZIP archive: "+str(archive))
+    update(state="converting")
+    with zipfile.ZipFile(archive) as z:
+        entries=[n for n in z.namelist() if pathlib.PurePosixPath(n).suffix.lower() in (".wav",".aif",".aiff",".flac",".ogg",".mp3")]
+        for i,name in enumerate(entries):
+            p=pathlib.PurePosixPath(name)
+            if p.is_absolute() or ".." in p.parts: continue
+            dest=(out/f"part-{part}").joinpath(*p.parts).with_suffix(".mp3")
+            if dest.exists() and dest.stat().st_size>0: continue
+            dest.parent.mkdir(parents=True,exist_ok=True)
+            temp=dest.with_suffix(".working")
+            if p.suffix.lower()==".mp3":
+                with z.open(name) as src, temp.open("wb") as dst: shutil.copyfileobj(src,dst)
+            else:
+                proc=subprocess.Popen(["ffmpeg","-hide_banner","-loglevel","error","-nostdin","-y","-i","pipe:0","-map","0:a:0","-vn","-codec:a","libmp3lame","-b:a","192k","-f","mp3",str(temp)],stdin=subprocess.PIPE)
+                with z.open(name) as src:
+                    try:
+                        while chunk:=src.read(262144): proc.stdin.write(chunk)
+                    except BrokenPipeError: pass
+                proc.stdin.close()
+                if proc.wait()!=0:
+                    temp.unlink(missing_ok=True)
+                    raise RuntimeError("Conversion failed: "+name)
+            temp.rename(dest)
+            total+=1
+            if total%10==0: update(converted=total,last_file=name)
+    archive.unlink()
+    current=json.loads(log.read_text()).get("completed_parts",[])
+    current.append(part)
+    update(completed_parts=current,converted=total,state="running")
+update(state="completed",converted=total,finished_at=time.strftime("%Y-%m-%d %H:%M:%S UTC",time.gmtime()))
+PY
+if ! command -v ffmpeg >/dev/null; then
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg
+fi
+if ! command -v curl >/dev/null; then
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl
+fi
+echo "FREE_DISK_BYTES=$(df -B1 --output=avail "$BASE" | tail -1 | tr -d ' ')"
+if [ "$(df -B1 --output=avail "$BASE" | tail -1)" -lt 6000000000 ]; then
+  echo "INSUFFICIENT_SPACE: Need at least 6 GB free; not starting"
+  exit 1
+fi
+if systemctl is-active --quiet zeroline-sonniss.service; then
+  echo "ALREADY_RUNNING"
+else
+  systemd-run --unit=zeroline-sonniss --description="Zero Line Sonniss audio download and MP3 conversion" --property=WorkingDirectory="$BASE" /usr/bin/python3 "$BASE/convert.py"
+fi
+echo "STATUS_FILE=$BASE/status.json"
+echo "OUTPUT_FOLDER=$BASE/mp3"
+systemctl is-active zeroline-sonniss.service || true
