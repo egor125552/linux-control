@@ -1,41 +1,62 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /srv/ARGON-VC
+/srv/era-audio/venv/bin/python - <<'PY'
+from pathlib import Path
+import hashlib,subprocess,re,json
 
-cat > tests/test_neural_source.py <<'PY'
-import unittest,torch
-from argon_core.source import GlottalExcitationNet
+root=Path('/srv/Zombie Horror Game/Зимний прототип/scene')
+allowed=('Александр','Виктор','Учёный 1','Учёный 2','Диктор','Бандит','Бандиты','Незнакомый')
+exts={'.wav','.mp3','.m4a','.flac','.ogg','.opus','.aac'}
+candidates=[Path('/srv/ARGON-VC/data/ARGON uploads/Экспериментальный голос.mp3')]
 
-class SourceTests(unittest.TestCase):
-    def test_shape_and_gradient_with_real_carrier(self):
-        m=GlottalExcitationNet(sample_rate=24000,hop=240)
-        f0=torch.tensor([[120.,122.,0.,125.,124.]])
-        e=torch.ones_like(f0)*.3
-        carrier=torch.linspace(-1,1,5*240)[None]
-        y=m(f0,e,aperiodic=carrier)
-        self.assertEqual(tuple(y.shape),(1,1200))
-        self.assertTrue(torch.isfinite(y).all())
-        y.square().mean().backward()
-        self.assertTrue(any(p.grad is not None and torch.isfinite(p.grad).all() for p in m.parameters()))
+if root.exists():
+    for p in root.rglob('*'):
+        if not p.is_file() or p.suffix.lower() not in exts: continue
+        parts=p.parts
+        if any('Готовые MP3'==x for x in parts): continue
+        if any(x in allowed for x in parts):
+            candidates.append(p)
 
-    def test_unvoiced_is_silent_without_real_carrier(self):
-        m=GlottalExcitationNet(sample_rate=24000,hop=240)
-        y=m(torch.zeros(1,8),torch.ones(1,8)*.5)
-        self.assertLess(float(y.detach().abs().max()),1e-7)
+# Add standalone clean speech references, but reserve two files for honest transfer tests.
+for p in Path('/srv/ARGON-VC/data').rglob('*'):
+    if not p.is_file() or p.suffix.lower() not in exts: continue
+    if p.name in {'Экспериментальный голос.mp3','victor_source.wav','Учёный 2 пробная реплика.wav'}: continue
+    s=str(p).lower()
+    if any(k in s for k in ('александр','alexander','профиль')):
+        candidates.append(p)
 
-    def test_unvoiced_uses_real_carrier_when_present(self):
-        m=GlottalExcitationNet(sample_rate=24000,hop=240)
-        carrier=torch.sin(torch.linspace(0,300,8*240))[None]
-        y=m(torch.zeros(1,8),torch.ones(1,8)*.5,aperiodic=carrier)
-        self.assertGreater(float(y.detach().std()),1e-3)
+unique=[];seen={}
+for p in candidates:
+    if not p.exists() or p.stat().st_size<20000:continue
+    h=hashlib.sha1()
+    with p.open('rb') as f:
+        while True:
+            b=f.read(1024*1024)
+            if not b:break
+            h.update(b)
+    key=(p.stat().st_size,h.hexdigest())
+    if key in seen:continue
+    seen[key]=p
+    try:
+        dur=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',str(p)],text=True).strip())
+    except Exception:
+        continue
+    if .25 <= dur <= 1800:
+        unique.append((p,dur))
 
-if __name__=='__main__':unittest.main()
+manifest=Path('models/ARGON Neural corpus.txt');manifest.parent.mkdir(parents=True,exist_ok=True)
+manifest.write_text('\n'.join(str(p) for p,d in unique)+'\n')
+by={}
+for p,d in unique:
+    who='experimental' if p.name=='Экспериментальный голос.mp3' else next((x for x in allowed if x in p.parts),'other')
+    by[who]=by.get(who,0)+d
+print('UNIQUE_FILES',len(unique))
+print('TOTAL_MINUTES',round(sum(d for p,d in unique)/60,3))
+for k,v in sorted(by.items(),key=lambda kv:-kv[1]):
+    print('SPEAKER',k,'MINUTES',round(v/60,3))
+print('MANIFEST',manifest)
+print('FIRST_FILES')
+for p,d in unique[:25]:
+    print(round(d,2),p)
 PY
-
-PYTHONPATH=/srv/ARGON-VC /srv/era-audio/venv/bin/python -m unittest  tests.test_neural_source tests.test_neural_bottleneck tests.test_neural_filter tests.test_neural_losses  tests.test_neural_engine tests.test_neural_split tests.test_neural_real_aperiodic tests.test_neural_rvq_stability -v
-
-echo '=== GAME DIRECTORIES ==='
-find '/srv/Zombie Horror Game' -maxdepth 4 -type d 2>/dev/null | grep -Ei 'voice|dialog|speech|replic|реплик|голос|tts|character|персонаж|audio' | head -250 || true
-
-echo '=== LARGE SPEECH-LIKE FILES ==='
-find '/srv/Zombie Horror Game' -type f \( -iname '*.wav' -o -iname '*.mp3' -o -iname '*.m4a' -o -iname '*.flac' \) -size +100k 2>/dev/null  | grep -Ei 'voice|dialog|speech|replic|реплик|голос|tts|виктор|александр|уч[её]н|bandit|диктор|scientist|victor|alexander'  | head -400 || true
