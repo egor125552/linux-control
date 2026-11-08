@@ -1,26 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /srv/ARGON-VC
-echo '=== TRAINING ==='
+cd '/srv/Zombie Horror Game/Зимний прототип'
+
+echo '=== TRAINING STILL ACTIVE ==='
 systemctl is-active argon-neural-long.service || true
-ps -eo pid,etime,%cpu,%mem,args | grep 'argon_core.neural_continue' | grep -v grep || true
 
-echo '=== TTS BINARIES ==='
-command -v edge-tts || true
-command -v piper || true
-command -v espeak-ng || true
-command -v espeak || true
+echo '=== VOICES ==='
+sed -n '1,220p' 'scene/Голоса Google TTS.txt' 2>/dev/null || true
 
-echo '=== PYTHON TTS PACKAGES ==='
-/srv/era-audio/venv/bin/python - <<'PY'
-mods=['edge_tts','google.cloud.texttospeech','gtts','TTS','piper']
-for m in mods:
-    try:
-        __import__(m)
-        print('YES',m)
-    except Exception as e:
-        print('NO',m,type(e).__name__)
-PY
+echo '=== GEMINI TTS GUIDE ==='
+sed -n '1,320p' 'Как работать с Gemini TTS для ChatGPT.txt' 2>/dev/null || true
 
-echo '=== PROJECT TTS HINTS ==='
-grep -RIlE 'google.*tts|texttospeech|edge_tts|edge-tts|gemini.*tts|speech.*synth|Olgido|Daro|Enzo' '/srv/Zombie Horror Game' '/srv/ARGON-VC' 2>/dev/null | head -80 || true
+echo '=== RELATED SCRIPTS ==='
+find . -maxdepth 4 -type f \( -iname '*.py' -o -iname '*.sh' -o -iname '*.js' \) -print0 2>/dev/null  | xargs -0 grep -IlE 'gemini.*tts|generate.*speech|response_modalities.*AUDIO|prebuilt_voice_config|speech_config' 2>/dev/null  | head -50 || true
