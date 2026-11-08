@@ -6,17 +6,17 @@ systemctl is-active argon-neural-long.service || true
 PID=$(systemctl show -p MainPID --value argon-neural-long.service)
 ps -p "$PID" -o pid,etime,%cpu,%mem,rss,stat,args || true
 
-if [ ! -x /srv/argon-tts-venv/bin/edge-tts ]; then
-  python3 -m venv /srv/argon-tts-venv
-  /srv/argon-tts-venv/bin/pip -q install --upgrade pip
-  /srv/argon-tts-venv/bin/pip -q install edge-tts
-fi
-
 PUB='/srv/era-audio/argon-neural-quote'
 mkdir -p "$PUB"
 TEXT='Я сейчас вам покажу, откуда на Беларусь готовилось нападение.'
 
-/srv/argon-tts-venv/bin/edge-tts   --voice ru-RU-DmitryNeural   --text "$TEXT"   --write-media "$PUB/Исходная фраза обычным голосом.mp3"
+/srv/argon-tts-venv/bin/pip -q install gTTS
+/srv/argon-tts-venv/bin/python - <<'PY'
+from gtts import gTTS
+text='Я сейчас вам покажу, откуда на Беларусь готовилось нападение.'
+gTTS(text=text,lang='ru',slow=False).save('/srv/era-audio/argon-neural-quote/Исходная фраза обычным голосом.mp3')
+print('GTTS_OK')
+PY
 
 ffmpeg -y -nostdin -loglevel error   -i "$PUB/Исходная фраза обычным голосом.mp3"   -ar 24000 -ac 1 "$PUB/Исходная фраза обычным голосом.wav"
 
@@ -25,10 +25,9 @@ for i in $(seq 1 20); do
   cp -f 'results/ARGON Neural Continuous 50000 Latest.pt' /tmp/argon-quote-latest.pt
   if /srv/era-audio/venv/bin/python - <<'PY'
 import torch
-p='/tmp/argon-quote-latest.pt'
-o=torch.load(p,map_location='cpu',weights_only=True)
+o=torch.load('/tmp/argon-quote-latest.pt',map_location='cpu',weights_only=True)
+print('SNAPSHOT_EPOCH',int(o.get('metadata',{}).get('epoch',0)))
 assert int(o.get('metadata',{}).get('epoch',0))>0
-print('SNAPSHOT_EPOCH',int(o['metadata']['epoch']))
 PY
   then break; fi
   sleep 1
