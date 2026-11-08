@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /srv/ARGON-VC
-sleep 45
+
 echo '=== SERVICES ==='
 systemctl is-active argon-neural-long.service || true
 systemctl is-active argon-neural-v2.service || true
-echo '=== INSTANT CPU ==='
-PID1=$(systemctl show -p MainPID --value argon-neural-long.service)
-PID2=$(systemctl show -p MainPID --value argon-neural-v2.service)
-ps -p "$PID1","$PID2" -o pid,etime,%cpu,%mem,rss,stat,args || true
-echo '=== V2 LOG ==='
-tail -100 'results/ARGON Neural 2 long.log' 2>/dev/null || true
-echo '=== V2 CHECKPOINTS ==='
-ls -lh 'results/ARGON Neural 2 Long.pt' 'results/ARGON Neural 2 Long Latest.pt' 2>/dev/null || true
+systemctl --no-pager --full status argon-neural-v2.service | sed -n '1,80p' || true
+
+echo '=== V2 FILE LIST ==='
+find argon_neural_v2 -maxdepth 2 -type f -printf '%p %s\n' | sort
+
+echo '=== V2 FILES ==='
+for f in $(find argon_neural_v2 -maxdepth 1 -type f -name '*.py' | sort); do
+  echo "===== $f ====="
+  cat "$f"
+done
+
+echo '=== V2 TESTS ==='
+find tests -maxdepth 1 -type f -iname '*v2*' -o -iname '*neural2*' 2>/dev/null | sort | while read f; do echo "===== $f ====="; cat "$f"; done
+
+echo '=== SERVICE UNIT ==='
+systemctl cat argon-neural-v2.service || true
