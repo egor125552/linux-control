@@ -2,22 +2,22 @@
 set -euo pipefail
 cd /srv/ARGON-VC
 
-echo '=== SERVICES ==='
-systemctl is-active argon-neural-long.service || true
+echo '=== V2 STATUS ==='
 systemctl is-active argon-neural-v2.service || true
-systemctl --no-pager --full status argon-neural-v2.service | sed -n '1,80p' || true
+systemctl --no-pager --full status argon-neural-v2.service | sed -n '1,70p' || true
+tail -80 'results/ARGON Neural 2 long.log' 2>/dev/null || true
 
-echo '=== V2 FILE LIST ==='
-find argon_neural_v2 -maxdepth 2 -type f -printf '%p %s\n' | sort
-
-echo '=== V2 FILES ==='
-for f in $(find argon_neural_v2 -maxdepth 1 -type f -name '*.py' | sort); do
+for f in   argon_neural_v2/content.py   argon_neural_v2/features.py   argon_neural_v2/losses.py   argon_neural_v2/critic.py   argon_neural_v2/train.py
+do
   echo "===== $f ====="
   cat "$f"
 done
 
-echo '=== V2 TESTS ==='
-find tests -maxdepth 1 -type f -iname '*v2*' -o -iname '*neural2*' 2>/dev/null | sort | while read f; do echo "===== $f ====="; cat "$f"; done
+echo '=== CURRENT FOUR FILE HEADS ==='
+for f in argon_neural_v2/source.py argon_neural_v2/tract.py argon_neural_v2/postfilter.py argon_neural_v2/engine.py; do
+  echo "===== $f ====="
+  sed -n '1,260p' "$f"
+done
 
-echo '=== SERVICE UNIT ==='
+echo '=== SERVICE ==='
 systemctl cat argon-neural-v2.service || true
