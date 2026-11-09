@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-for f in '/srv/Zombie Horror Game/Зимний прототип/scene/Сцена 5 ручные дубли 6 ноября 2026/Довести нарезку.py' '/srv/Zombie Horror Game/Зимний прототип/scene/Сцена 6 Александр ручной дубль 6 ноября 2026/Довести Александра.py' '/srv/Zombie Horror Game/Зимний прототип/scene/Резерв нарезки Александра до захвата дыхания 6 ноября 2026/Довести Александра.py'; do
-  echo "===== $f ====="
-  if [ -f "$f" ]; then cat "$f"; else echo NOT_FOUND; fi
-done
+echo '=== WORD TOOL ==='
+cat '/srv/Zombie Horror Game/Tools/vosk/Разрезать по словам Vosk.py'
+echo '=== PRODUCTION CORE 525-696 ==='
+sed -n '525,696p' '/srv/Zombie Horror Game/Tools/vosk/Разрезать большой дубль Vosk.py'
+echo '=== SEARCH BIG SMALL ==='
+grep -RniE 'больш.*меньш|длин.*корот|sort.*duration|duration.*sort|reverse=True' '/srv/Zombie Horror Game/Зимний прототип' '/srv/Zombie Horror Game/Tools' 2>/dev/null | head -200 || true
