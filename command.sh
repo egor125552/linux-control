@@ -6,27 +6,53 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('/srv/Zombie Horror Game/Зимний прототип/scene/Сцена 7 ручные дубли 9 ноября 2026/Довести нарезку сцены 7.py')
 s=p.read_text('utf-8')
-s=s.replace('import numpy as np','from array import array')
-s=s.replace("d=np.frombuffer(w.readframes(w.getnframes()),dtype='<i2').copy()","d=array('h'); d.frombytes(w.readframes(w.getnframes()))")
-s=s.replace("seg=data[pos:min(pos+frame,len(data))].astype(np.float64)\n        if len(seg) and float(np.sqrt(np.mean(seg*seg)))>threshold:active.append(pos/sr)","seg=data[pos:min(pos+frame,len(data))]\n        if len(seg) and math.sqrt(sum(x*x for x in seg)/len(seg))>threshold:active.append(pos/sr)")
-s=s.replace("w.writeframes(data[ia:ib].astype('<i2').tobytes())","w.writeframes(data[ia:ib].tobytes())")
-s=s.replace("silence=np.zeros(int(round(pause*p.framerate)),dtype=np.int16)\n    joined=np.concatenate([chunks[0],silence,chunks[1]])","silence=array('h',[0])*int(round(pause*p.framerate))\n    joined=array('h'); joined.extend(chunks[0]); joined.extend(silence); joined.extend(chunks[1])")
-s=s.replace("w.writeframes(joined.astype('<i2').tobytes())","w.writeframes(joined.tobytes())")
+old="""        rawgap=speech[person][j][0]-speech[person][i][1] if speech[person][i] and speech[person][j] else 99
+        if rawgap<1.25 and cur[1]>=nxt[0]-.02:
+            mid=(speech[person][i][1]+speech[person][j][0])/2
+            cur[1]=min(cur[1],mid-.02);nxt[0]=max(nxt[0],mid+.02)"""
+new="""        if speech[person][i] and speech[person][j]:
+            mid=(speech[person][i][1]+speech[person][j][0])/2
+            cur[1]=min(cur[1],mid-.03)
+            nxt[0]=max(nxt[0],mid+.03)"""
+if old not in s: raise SystemExit('old adjacency block not found')
+s=s.replace(old,new)
+old2="""            if person=='Дмитрий' and i==14:
+                a=min(a,258.58);b=max(b,262.02)
+            write(dst,p,data,a,b)"""
+new2="""            if person=='Дмитрий' and i==10:
+                a=max(a,196.30)
+            if person=='Дмитрий' and i==14:
+                a=min(a,258.58);b=max(b,262.02)
+            write(dst,p,data,a,b)"""
+if old2 not in s: raise SystemExit('special block not found')
+s=s.replace(old2,new2)
+# Add duration-to-speech validation.
+old3="""        if d<.45 or d>45:issues.append(f'{w.name}: suspicious duration {d:.3f}')
+        if w.stat().st_size<1000:issues.append(f'{w.name}: tiny file')"""
+new3="""        if d<.45 or d>45:issues.append(f'{w.name}: suspicious duration {d:.3f}')
+        idx=int(w.stem.rsplit(' ',1)[-1])-1
+        sp=speech[person][idx]
+        if sp is not None:
+            base=sp[1]-sp[0]
+            if d < max(.45,base-.45) or d > base+2.55:
+                issues.append(f'{w.name}: duration {d:.3f} vs speech {base:.3f}')
+        if w.stat().st_size<1000:issues.append(f'{w.name}: tiny file')"""
+if old3 not in s: raise SystemExit('validation block not found')
+s=s.replace(old3,new3)
 p.write_text(s,'utf-8')
-print('PATCHED', 'numpy' not in s)
+print('PATCHED_BOUNDARIES')
 PY
 python3 "$SCRIPT"
-echo '=== FILE COUNTS ==='
-find "$WORK" -mindepth 2 -maxdepth 2 -type f -name 'Сцена 7 *.wav' | wc -l
-find "$WORK/Готовые MP3" -type f -name 'Сцена 7 *.mp3' | wc -l
-find '/srv/Zombie Horror Game/Зимний прототип/audio/voices/game' -maxdepth 1 -type f -name 'Сцена 7 *.mp3' | wc -l
 echo '=== REPORT ==='
 python3 - <<'PY'
-import json
-p='/srv/Zombie Horror Game/Зимний прототип/scene/Сцена 7 ручные дубли 9 ноября 2026/Итог нарезки.json'
-r=json.load(open(p,encoding='utf-8'))
+import json,wave
+from pathlib import Path
+work=Path('/srv/Zombie Horror Game/Зимний прототип/scene/Сцена 7 ручные дубли 9 ноября 2026')
+r=json.load(open(work/'Итог нарезки.json',encoding='utf-8'))
 print('OK',r['validation_ok'],'TOTAL',r['total_clips'],'GAME',r['game_mp3_count'],'ISSUES',r['validation_issues'])
-print('SPECIAL',r['special_fixes'])
-for c,v in r['characters'].items():
- print(c,v['clips'])
+for c in r['characters']:
+ ds=[]
+ for w in sorted((work/c).glob('*.wav')):
+  with wave.open(str(w),'rb') as f: ds.append(round(f.getnframes()/f.getframerate(),2))
+ print(c,ds)
 PY
