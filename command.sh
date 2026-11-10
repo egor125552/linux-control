@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 R='/srv/Zombie Horror Game/Зимний прототип'
-echo '===== main.js 175-265 ====='
-nl -ba "$R/js/main.js" | sed -n '175,265p'
-echo '===== checkpoints full ====='
-nl -ba "$R/js/mechanics/Чекпойнты.js"
-echo '===== scene6 music full ====='
-nl -ba "$R/js/audio/Музыка сцены 6.js"
+echo '===== spatial-audio 1-190 ====='
+nl -ba "$R/js/audio/spatial-audio.js" | sed -n '1,190p'
+echo '===== spatial-audio 191-366 ====='
+nl -ba "$R/js/audio/spatial-audio.js" | sed -n '191,366p'
