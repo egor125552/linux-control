@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -u
-echo '=== HOST ==='
-hostname; whoami; date -u
-echo '=== REMOTE PROCESSES ==='
-ps -eo pid,ppid,user,args | grep -Ei 'desktop.commander|desktop-commander|wonderwhy|remote.*mcp' | grep -v grep || true
-echo '=== SYSTEM SERVICES ==='
-systemctl list-units --all --type=service --no-pager | grep -Ei 'desktop|commander' || true
-echo '=== USER SERVICES ==='
-for u in root ubuntu egor; do id "$u" >/dev/null 2>&1 || continue; echo "USER=$u"; systemctl --user --machine="$u@" list-units --all --type=service --no-pager 2>/dev/null | grep -Ei 'desktop|commander' || true; done
-echo '=== INSTALLATION ==='
-command -v node || true; command -v npx || true
-find /etc/systemd/system /root/.config/systemd/user /home -maxdepth 5 \( -iname '*desktop*commander*' -o -iname '*wonderwhy*' \) 2>/dev/null | head -60
+echo '=== SERVICE CONFIG (redacted env) ==='
+systemctl cat desktop-commander-remote.service | sed -E '/Environment=|EnvironmentFile=|token|secret|key|password/Is/.*/[REDACTED]/'
+echo '=== SERVICE STATUS ==='
+systemctl show desktop-commander-remote.service -p User -p ExecStart -p Restart -p WorkingDirectory -p ActiveState -p SubState
+echo '=== REMOTE CLI HELP ==='
+timeout 12 /usr/local/bin/desktop-commander remote --help 2>&1 | head -100 || true
+echo '=== AUTH RELATED FILE NAMES ==='
+find /root/.config /root/.local /root/.desktop-commander /home -maxdepth 4 -type f \( -iname '*auth*' -o -iname '*desktop*' -o -iname '*remote*' \) 2>/dev/null | head -80
+echo '=== RECENT JOURNAL (possible private URLs masked) ==='
+journalctl -u desktop-commander-remote.service -n 35 --no-pager 2>&1 | sed -E 's#https?://[^ ]+#<URL>#g; s/(token|code|secret|key)[:=][^ ]+/\\1=[REDACTED]/Ig'
