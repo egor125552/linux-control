@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT='/srv/Zombie Horror Game/Зимний прототип'
-echo '=== AGENTS ==='
-cat "$ROOT/AGENTS.md"
-echo '=== JS TREE ==='
-find "$ROOT/js" -maxdepth 3 -type f -printf '%P\n' | sort
-echo '=== TEST TREE ==='
-find "$ROOT/tests" -maxdepth 2 -type f -printf '%P\n' | sort
-echo '=== SCENE TEXT FILES ==='
-find "$ROOT" -maxdepth 2 -type f \( -iname '*.txt' -o -iname '*.md' \) -printf '%P\n' | sort | sed -n '1,240p'
+R='/srv/Zombie Horror Game/Зимний прототип'
+for p in   js/main.js   js/core/runtime.js   js/core/event-bus.js   js/input/gesture-controller.js   js/input/input-forwarder.js   js/input/Клавиатура.js   js/input/Доступность\ лаборатории.js
+do
+  echo "===== $p ====="
+  cat "$R/$p"
+done
