@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-set -euo pipefail
-ROOT='/srv/Zombie Horror Game/Зимний прототип'
-echo '=== SCENE 7 RELATED FILES ==='
-find "$ROOT" -maxdepth 4 -type f | grep -Ei 'Сцена 7|сцена 7|Scene 7|scene 7' | sort | sed -n '1,240p'
-echo '=== MUSIC MODULES ==='
-find "$ROOT/js" -type f | grep -Ei 'музык|music' | sort
-echo '=== SCENE 7 REFERENCES IN CODE ==='
-grep -RniE 'Сцена 7|scene7|scene-7|scene 7|031 Connor|LAB6_MUSIC|music' "$ROOT/js" "$ROOT/scene" 2>/dev/null | grep -E 'Сцена 7|scene7|scene-7|031 Connor|LAB6_MUSIC|Музыка сцены 7|music.*7' | sed -n '1,260p'
-echo '=== MUSIC DIRECTORY ==='
-find "$ROOT/audio/music" -maxdepth 1 -type f -printf '%f\n' | sort | sed -n '1,220p'
+set -u
+echo '=== HOST ==='
+hostname; whoami; date -u
+echo '=== REMOTE PROCESSES ==='
+ps -eo pid,ppid,user,args | grep -Ei 'desktop.commander|desktop-commander|wonderwhy|remote.*mcp' | grep -v grep || true
+echo '=== SYSTEM SERVICES ==='
+systemctl list-units --all --type=service --no-pager | grep -Ei 'desktop|commander' || true
+echo '=== USER SERVICES ==='
+for u in root ubuntu egor; do id "$u" >/dev/null 2>&1 || continue; echo "USER=$u"; systemctl --user --machine="$u@" list-units --all --type=service --no-pager 2>/dev/null | grep -Ei 'desktop|commander' || true; done
+echo '=== INSTALLATION ==='
+command -v node || true; command -v npx || true
+find /etc/systemd/system /root/.config/systemd/user /home -maxdepth 5 \( -iname '*desktop*commander*' -o -iname '*wonderwhy*' \) 2>/dev/null | head -60
